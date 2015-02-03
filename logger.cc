@@ -89,7 +89,7 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
 		case TARGET_ROTATE_BUFFER:
 		    {
 				DBG_OUT("TARGET_ROTATE_BUFFER [%d]", req.auxInt);
-				t->flushAll();
+				t->flushAll(false);
 //		    	t->flush(req.auxInt);
 		    }
 			break;
@@ -176,10 +176,11 @@ void GreaseLogger::flushAll() { // flushes buffers. Synchronous
 		ERROR_OUT("No default target!");
 
 	logTarget **t; // shut down other targets.
-	static GreaseLogger::TargetTable::HashIterator iter(LOGGER->targets);
-	while(iter.getNext()) {
+	GreaseLogger::TargetTable::HashIterator iter(LOGGER->targets);
+	while(!iter.atEnd()) {
 		t = iter.data();
 		(*t)->flushAll();
+		iter.getNext();
 	}
 }
 

@@ -473,8 +473,8 @@ protected:
 			}
 		}
 
-		void flushAll() {
-			rotate();
+		void flushAll(bool _rotate = true) {
+			if(_rotate) rotate();
 			while(1) {
 				logBuf *b = NULL;
 				if(writeOutBuffers.remove(b)) {
