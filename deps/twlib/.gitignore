@@ -25,3 +25,4 @@ test_rbtree
 /test_twcircular_mv_noblock
 /test_twcircular_mv_timeout
 *.cproject
+/.project

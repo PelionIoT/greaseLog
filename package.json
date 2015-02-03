@@ -1,0 +1,23 @@
+{
+  "name": "greaseLog",
+  "version": "0.0.1",
+  "description": "Fast, production logging subsystem",
+  "main": "index.js",
+  "keywords": [
+    "logging", "logger"
+  ],
+  "author": "WigWag<npm@wigwag.com> (http://www.wigwag.com)",
+  "licenses": [
+    {
+      "type": "MIT"
+    }
+  ],
+  "repository" :
+  { "type" : "git"
+  , "url" : "https://github.com/WigWagCo/greaseLog"
+  },
+  "bugs": {
+    "url": "https://github.com/WigWagCo/greaseLog/issues"
+  },
+  "gypfile": true
+}
