@@ -15,5 +15,6 @@ GPERF_DIR=${DEPS_DIR}/gperftools-2.4
 pushd $GPERF_DIR
 
 touch $LOG
+cp configure.orig configure
 (./configure --prefix=${DEPS_DIR}/build --enable-frame-pointers --with-pic 2>&1 >> $LOG && make -j4 2>&1 >> $LOG && make install 2>&1 >> $LOG) || echo "Error building gperftools-2.4"
 popd

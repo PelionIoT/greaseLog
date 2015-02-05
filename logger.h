@@ -151,7 +151,8 @@ public:
 //		start_info() : callback() {}
 //	};
 
-	struct target_start_info {
+	class target_start_info final {
+	public:
 		bool needsAsyncQueue; // if the callback must be called in the v8 thread
 		_errcmn::err_ev err;      // used if above is true
 		actionCB cb;
@@ -159,6 +160,14 @@ public:
 		Handle<Function> targetStartCB;
 		TargetId targId;
 		target_start_info() : needsAsyncQueue(false), err(), cb(NULL), targetStartCB(), targId(0) {}
+		target_start_info& operator=(target_start_info&& o) {
+			if(o.err.hasErr())
+				err = std::move(o.err);
+			cb = o.cb; o.cb = NULL;
+			targetStartCB = o.targetStartCB; o.targetStartCB.Clear();
+			targId = o.targId;
+			return *this;
+		}
 	};
 
 protected:
@@ -168,7 +177,7 @@ protected:
 
 	uv_thread_t logThreadId;
 	uv_async_t asyncTargetCallback;
-	TWlib::tw_safeCircular<target_start_info *, LoggerAlloc > targetCallbackQueue;
+	TWlib::tw_safeCircular<target_start_info, LoggerAlloc > targetCallbackQueue;
 	_errcmn::err_ev err;
 
 	// Definitions:
@@ -1063,7 +1072,7 @@ protected:
     GreaseLogger(int buffer_size , int chunk_size) :
     	nextFilterId(1), nextTargetId(1),
     	bufferSize(buffer_size), chunkSize(chunk_size),
-    	targetCallbackQueue(MAX_TARGET_CALLBACK_STACK),
+    	targetCallbackQueue(MAX_TARGET_CALLBACK_STACK, true),
     	err(),
 //    	showNoLevel(true), showNoTag(true), showNoOrigin(true),
     	internalCmdQueue( INTERNAL_QUEUE_SIZE, true ),
