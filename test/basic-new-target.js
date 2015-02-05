@@ -41,8 +41,35 @@ logger.addTarget({
 			logger.error("....ERROR....");
 			logger.log(" log log log");
 		}
+		logger.error("************ LAST **********");
 	});
 
+logger.addTarget({
+	    file: "rotateThis.log",
+	    rotate: {
+	    	max_files: 5,
+	    	max_file_size:  10000,
+	    	max_total_size: 100000,
+	    	rotate_on_start: true
+	    }
+	},function(targetid,err){
+		if(err) {
+			console.log("error: "+ util.inspect(err));
+		} else {
+			console.log("added rotate target: " + targetid);
+			var ret = logger.addFilter({ 
+				target: targetid,
+				tag: 'rotate'
+				// ,
+				// mask: logger.LEVELS.ALL
+			});
+		}		
+
+		for(var n=0;n<1000;n++) {
+			logger.debug('rotate',"....rotate me....");
+		}
+
+	});
 
 
 

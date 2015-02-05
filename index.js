@@ -79,7 +79,7 @@ var setup = function(levels) {
 	console.dir(levels);
 
 	this.LEVELS = {};
-
+	this.LEVELS.ALL = 0xFFFFFFFF; // max uint32_t
 
 
 	var levelsK = Object.keys(levels);
@@ -96,7 +96,18 @@ var setup = function(levels) {
 
 	}
 
+
+
 	var self = this;
+
+
+	/**
+	 * Creates the user's log.LEVEL functions
+	 * forms
+	 * log.LEVEL(origin,tag,message)
+	 * log.LEVEL(tag,message)
+	 * log.LEVEL(message)
+	 */
 
 	if(!instance) {
 		instance = nativelib.newLogger();
@@ -106,8 +117,12 @@ var setup = function(levels) {
 			
 			var createfunc = function(_name,_n) {
 				self[_name] = function(){
-	//				console.log("doing: " + N  + " " + name);
-					self._log(_n,arguments[0],arguments[1],arguments[2]);
+					if(arguments.length > 2)
+						self._log(_n,arguments[2],arguments[1],arguments[0]);
+					else if(arguments.length == 2)
+						self._log(_n,arguments[1],arguments[0]);
+					else
+						self._log(_n,arguments[0]);
 				}
 			}
 
@@ -165,4 +180,5 @@ var setup = function(levels) {
 
 
 module.exports = new setup();
+
 

@@ -78,7 +78,7 @@ GreaseLogger *GreaseLogger::LOGGER = NULL;
 
 void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) {
 	GreaseLogger::internalCmdReq req;
-	while(LOGGER->internalCmdQueue.remove_mv(req)) {
+	while(LOGGER->internalCmdQueue.removeMv(req)) {
 		logTarget *t = NULL;
     	if(req.d > 0)
     		t = GreaseLogger::LOGGER->getTarget(req.d);
@@ -106,13 +106,26 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
 			}
 
 			break;
-		}
+    	case INTERNAL_SHUTDOWN:
+    	{
+    		// disable timer
+    		uv_timer_stop(&LOGGER->flushTimer);
+    		// disable all queues
+    		uv_close((uv_handle_t *)&LOGGER->asyncExternalCommand, NULL);
+    		uv_close((uv_handle_t *)&LOGGER->asyncInternalCommand, NULL);
+    		uv_unref((uv_handle_t *)&LOGGER->flushTimer);
+    		// flush all queues
+    		flushAllSync();
+    		// kill thread
+
+    	}
+    	}
 	}
 }
 
 void GreaseLogger::handleExternalCmd(uv_async_t *handle, int status /*UNUSED*/) {
 	GreaseLogger::nodeCmdReq req;
-	while(LOGGER->nodeCmdQueue.remove_mv(req)) {
+	while(LOGGER->nodeCmdQueue.removeMv(req)) {
 		logTarget *t = NULL;
 //		switch(req->c) {
 //		case TARGET_ROTATE_BUFFER:
@@ -183,7 +196,20 @@ void GreaseLogger::flushAll() { // flushes buffers. Synchronous
 		iter.getNext();
 	}
 }
+void GreaseLogger::flushAllSync() { // flushes buffers. Synchronous
+	if(LOGGER->defaultTarget) {
+		LOGGER->defaultTarget->flushAllSync();
+	} else
+		ERROR_OUT("No default target!");
 
+	logTarget **t; // shut down other targets.
+	GreaseLogger::TargetTable::HashIterator iter(LOGGER->targets);
+	while(!iter.atEnd()) {
+		t = iter.data();
+		(*t)->flushAllSync();
+		iter.getNext();
+	}
+}
 GreaseLogger::logTarget::~logTarget() {
 
 }
@@ -318,9 +344,10 @@ void GreaseLogger::callTargetCallback(uv_async_t *h, int status ) {
 	target_start_info *info = NULL;
 	GreaseLogger *l = GreaseLogger::setupClass();
 	while(l->targetCallbackQueue.remove(info)) {
+		HEAVY_DBG_OUT("********* REMOVE targetCallbackQueue: %p\n", info);
 		const unsigned argc = 2;
 		Local<Value> argv[argc];
-		if(!info->targetStartCB->IsUndefined()) {
+		if(!info->targetStartCB.IsEmpty() && !info->targetStartCB->IsUndefined()) {
 			if(!info->err.hasErr()) {
 				argv[0] = Integer::New(info->targId);
 				info->targetStartCB->Call(Context::GetCurrent()->Global(),1,argv);
@@ -410,10 +437,12 @@ Handle<Value> GreaseLogger::RemoveFilter(const Arguments& args) {
  * }
  * obj = {
  *    file: "/path",
- *    append: true,
+ *    append: true,   // default
  *    rotate: {
  *       max_files: 5,
- *       size: 1000000
+ *       max_file_size:  100000,  // 100k
+ *       max_total_size: 10000000,    // 10MB
+ *       rotate_on_start: false   // default false
  *    }
  * }
  * obj = {
@@ -461,6 +490,7 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 		} else if (isFile->IsString()) {
 			Local<Value> jsMode = jsTarg->Get(String::New("mode"));
 			Local<Value> jsFlags = jsTarg->Get(String::New("flags"));
+			Local<Value> jsRotate = jsTarg->Get(String::New("rotate"));
 			int mode = DEFAULT_MODE_FILE_TARGET;
 			int flags = DEFAULT_FLAGS_FILE_TARGET;
 			if(jsMode->IsInt32()) {
@@ -478,7 +508,33 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
 			i->cb = start_target_cb;
 			i->targId = id;
-			new fileTarget(buffsize, id, l, flags, mode, v8str.operator *(), i, targetReady);
+			fileTarget::rotationOpts opts;
+			if(jsRotate->IsObject()) {
+				Local<Object> jsObj = jsRotate->ToObject();
+				Local<Value> js_max_files = jsObj->Get(String::New("max_files"));
+				Local<Value> js_max_file_size = jsObj->Get(String::New("max_file_size"));
+				Local<Value> js_total_size = jsObj->Get(String::New("max_total_size"));
+				Local<Value> js_on_start = jsObj->Get(String::New("rotate_on_start"));
+				if(js_max_files->IsUint32()) {
+					opts.max_files = js_max_files->Uint32Value(); opts.enabled = true;
+				}
+				if(js_max_file_size->IsUint32()) {
+					opts.max_file_size = js_max_file_size->Uint32Value(); opts.enabled = true;
+				}
+				if(js_total_size->IsUint32()) {
+					opts.max_total_size = js_total_size->Uint32Value(); opts.enabled = true;
+				}
+				if(js_on_start->IsBoolean()) {
+					if(js_on_start->IsTrue())
+						opts.rotate_on_start = true; opts.enabled = true;
+				}
+			}
+			HEAVY_DBG_OUT("********* NEW target_start_info: %p\n", i);
+
+			if(opts.enabled)
+				new fileTarget(buffsize, id, l, flags, mode, v8str.operator *(), i, targetReady, opts);
+			else
+				new fileTarget(buffsize, id, l, flags, mode, v8str.operator *(), i, targetReady);
 		} else if (isCallback->IsFunction()){
 			target_start_info *i = new target_start_info();
 
@@ -493,7 +549,6 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 	}
 	return scope.Close(Undefined());
 }
-
 
 /**
  * logstring and level manadatory
