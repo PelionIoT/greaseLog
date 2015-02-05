@@ -14,8 +14,5 @@ GPERF_DIR=${DEPS_DIR}/gperftools-2.4
 
 pushd $GPERF_DIR
 
-./configure --prefix=${DEPS_DIR}/build --enable-frame-pointers --with-pic
-make -j4
-make install
-
+(./configure --prefix=${DEPS_DIR}/build --enable-frame-pointers --with-pic && make -j4 && make install) || echo "Error building gperftools-2.4"
 popd

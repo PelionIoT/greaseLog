@@ -26,6 +26,8 @@
 
         [
           "OS=='linux'", {
+          "doit" : '<!(deps/install_deps.sh 2>&1 > install_deps.log)',
+
       "sources": [
         "logger.cc",
         "grease.cc",
@@ -36,7 +38,6 @@
       "ldflags" : [
       ],
       "include_dirs": [
-      '<!(deps/install_deps.sh)'
          "deps/twlib/include",
          "deps/build/include"
       ],
