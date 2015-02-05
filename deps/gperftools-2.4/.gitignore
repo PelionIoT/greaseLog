@@ -2,3 +2,4 @@
 *.la
 /config.status
 /Makefile
+/confdefs.h
