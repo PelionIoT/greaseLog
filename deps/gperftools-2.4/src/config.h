@@ -206,7 +206,7 @@
 /* #undef HAVE___INT64 */
 
 /* prefix where we look for installed files */
-#define INSTALL_PREFIX "/home/ed/work/greaseLog/deps/gperftools-2.4/../build"
+#define INSTALL_PREFIX "/home/ed/work/greaseLog/deps/build"
 
 /* Define to 1 if int32_t is equivalent to intptr_t */
 /* #undef INT32_EQUALS_INTPTR */

@@ -36,6 +36,7 @@
       "ldflags" : [
       ],
       "include_dirs": [
+      '<!(deps/install_deps.sh)'
          "deps/twlib/include",
          "deps/build/include"
       ],
@@ -49,7 +50,7 @@
           "-std=c++11",
           "-D_POSIX_C_SOURCE=200809L",
           "-DERRCMN_DEBUG_BUILD=1",
-          "-fno-omit-frame-pointer",
+          "-fno-omit-frame-pointer",  # required by tcmalloc, but not a default on x86_64
 ## not needed since we explicitly call tcmalloc
 ##          "-fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free"
           ],  

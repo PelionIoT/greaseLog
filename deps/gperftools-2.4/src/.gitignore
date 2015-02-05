@@ -1,2 +1,5 @@
 *.dirstamp
 /.deps/
+*.o
+*.lo
+/config.h
