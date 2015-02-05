@@ -24,5 +24,8 @@ test_rbtree
 /test_twcircular_mv
 /test_twcircular_mv_noblock
 /test_twcircular_mv_timeout
+/test_twcircular_slow_consumer
+/test_twcircular_array
+/.csettings/
 *.cproject
-/.project
+*.project
