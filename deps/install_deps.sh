@@ -9,10 +9,11 @@ while [ -h "$SOURCE" ]; do # resolve $SOURCE until the file is no longer a symli
 done
 
 DEPS_DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
-
+LOG=${DEPS_DIR}/../install_deps.log
 GPERF_DIR=${DEPS_DIR}/gperftools-2.4
 
 pushd $GPERF_DIR
 
-(./configure --prefix=${DEPS_DIR}/build --enable-frame-pointers --with-pic && make -j4 && make install) || echo "Error building gperftools-2.4"
+touch $LOG
+(./configure --prefix=${DEPS_DIR}/build --enable-frame-pointers --with-pic 2>&1 >> $LOG && make -j4 2>&1 >> $LOG && make install 2>&1 >> $LOG) || echo "Error building gperftools-2.4"
 popd
