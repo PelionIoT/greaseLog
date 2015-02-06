@@ -335,8 +335,8 @@ void GreaseLogger::start_target_cb(GreaseLogger *l, _errcmn::err_ev &err, void *
 				}
 			}
 		}
+		delete info;
 	}
-	delete info;
 }
 
 
@@ -357,6 +357,7 @@ void GreaseLogger::callTargetCallback(uv_async_t *h, int status ) {
 				info->targetStartCB->Call(Context::GetCurrent()->Global(),2,argv);
 			}
 		}
+		delete info;
 	}
 }
 
@@ -566,13 +567,13 @@ Handle<Value> GreaseLogger::Log(const Arguments& args) {
 		v8::String::Utf8Value v8str(args[0]->ToString());
 		meta.level = (uint32_t) args[1]->Int32Value();
 
-		if(args.Length() > 3 && args[3]->IsInt32()) // tag
-			meta.tag = (uint32_t) args[3]->Int32Value();
+		if(args.Length() > 2 && args[2]->IsInt32()) // tag
+			meta.tag = (uint32_t) args[2]->Int32Value();
 		else
 			meta.tag = 0;
 
-		if(args.Length() > 4 && args[4]->IsInt32()) // tag
-			meta.origin = (uint32_t) args[4]->Int32Value();
+		if(args.Length() > 3 && args[3]->IsInt32()) // tag
+			meta.origin = (uint32_t) args[3]->Int32Value();
 		else
 			meta.origin = 0;
 
@@ -593,13 +594,13 @@ Handle<Value> GreaseLogger::LogSync(const Arguments& args) {
 		v8::String::Utf8Value v8str(args[0]->ToString());
 		meta.level = (uint32_t) args[1]->Int32Value();
 
-		if(args.Length() > 3 && args[3]->IsInt32()) // tag
-			meta.tag = (uint32_t) args[3]->Int32Value();
+		if(args.Length() > 2 && args[2]->IsInt32()) // tag
+			meta.tag = (uint32_t) args[2]->Int32Value();
 		else
 			meta.tag = 0;
 
-		if(args.Length() > 4 && args[4]->IsInt32()) // tag
-			meta.origin = (uint32_t) args[4]->Int32Value();
+		if(args.Length() > 3 && args[3]->IsInt32()) // tag
+			meta.origin = (uint32_t) args[3]->Int32Value();
 		else
 			meta.origin = 0;
 
@@ -644,6 +645,7 @@ void GreaseLogger::_log(FilterList *list, logMeta &meta, char *s, int len) { // 
 			n++;
 		}
 	} else {  // write out to default target if the list does not apply to this level
+//		HEAVY_DBG_OUT("pass thru to default");
 		defaultTarget->write(s,len);
 	}
 }

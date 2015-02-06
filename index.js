@@ -150,7 +150,6 @@ var setup = function(levels) {
 //		var levelN  = levels[level];
 //		if(!levelN) return;
 		var tagN    = TAGS[tag];
-
 		if(!originN) originN = undefined;
 		if(!tagN) tagN = undefined;		
 

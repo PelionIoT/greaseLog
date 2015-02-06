@@ -177,7 +177,7 @@ protected:
 
 	uv_thread_t logThreadId;
 	uv_async_t asyncTargetCallback;
-	TWlib::tw_safeCircular<target_start_info, LoggerAlloc > targetCallbackQueue;
+	TWlib::tw_safeCircular<target_start_info  *, LoggerAlloc > targetCallbackQueue;
 	_errcmn::err_ev err;
 
 	// Definitions:

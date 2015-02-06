@@ -38,6 +38,7 @@ logger.addTarget({
 
 		for(var n=0;n<1000;n++) {
 			logger.debug("....DEBUG....");
+			logger.debug('Eds', "....DEBUG....");			
 			logger.error("....ERROR....");
 			logger.log(" log log log");
 		}
