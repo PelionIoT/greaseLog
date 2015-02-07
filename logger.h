@@ -697,6 +697,7 @@ protected:
 			if(ft->submittedWrites < 1 && ft->filerotation.enabled) {
 				if(ft->current_size > ft->filerotation.max_file_size) {
 					HEAVY_DBG_OUT("Rotate: past max file size\n");
+					uv_fs_close(ft->owner->loggerLoop, &ft->fileFs, ft->fileHandle, NULL);
 					// TODO close file..
 					ft->rotate_files();
 					// TODO open new file..

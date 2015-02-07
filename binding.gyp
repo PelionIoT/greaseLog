@@ -71,8 +71,15 @@
           "-Wall",
           "-std=c++11",
           "-D_POSIX_C_SOURCE=200809L",
-          "-DNO_ERROR_CMN_OUTPUT=1",
-          ],
+          "-DERRCMN_DEBUG_BUILD=1",
+          "-fno-omit-frame-pointer",  # required by tcmalloc, but not a default on x86_64
+## not needed since we explicitly call tcmalloc
+##          "-fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free"
+          ],  
+          "ldflags" : [
+            "-L../deps/build/lib",
+            "-Wl,-whole-archive ../deps/build/lib/libtcmalloc.a -Wl,-no-whole-archive" 
+          ]
       }
 
     },
