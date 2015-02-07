@@ -543,6 +543,7 @@ protected:
 			writeCBData *d = (writeCBData *) req->data;
 			d->b->clear();
 			d->t->returnBuffer(d->b);
+
 			delete req;
 		}
 		static void write_overflow_cb(uv_write_t* req, int status) {
@@ -626,10 +627,6 @@ protected:
 
 	class fileTarget final : public logTarget {
 	public:
-		uv_file fileHandle;
-		uv_fs_t fileFs;
-		char *myPath;
-
 		class rotationOpts final {
 		public:
 			bool enabled;
@@ -650,6 +647,22 @@ protected:
 			}
 
 		};
+	protected:
+
+
+		// this tracks the number of submitted async write calls. When it's zero
+		int submittedWrites; // ...it's safe to rotate
+		rotationOpts filerotation;
+		uint32_t current_size;
+		uint64_t all_files_size;
+	public:
+		uv_rwlock_t wrLock;
+		uv_file fileHandle;
+		uv_fs_t fileFs;
+		char *myPath;
+		int myMode; int myFlags;
+
+
 
 
 		static void on_open(uv_fs_t *req) {
@@ -674,7 +687,25 @@ protected:
 				ERROR_PERROR("file: write_cb() ",req->errorno);
 			}
 			writeCBData *d = (writeCBData *) req->data;
+			fileTarget *ft = (fileTarget *) d->t;
 			d->b->clear();
+
+			uv_rwlock_wrlock(&ft->wrLock);
+			ft->submittedWrites--;
+
+			// TODO - check for file rotation
+			if(ft->submittedWrites < 1 && ft->filerotation.enabled) {
+				if(ft->current_size > ft->filerotation.max_file_size) {
+					HEAVY_DBG_OUT("Rotate: past max file size\n");
+					// TODO close file..
+					ft->rotate_files();
+					// TODO open new file..
+					int r = uv_fs_open(ft->owner->loggerLoop, &ft->fileFs, ft->myPath, ft->myFlags, ft->myMode, NULL); // use default loop because we need on_open() cb called in event loop of node.js
+					on_open(&ft->fileFs);
+				}
+			}
+			uv_rwlock_wrunlock(&ft->wrLock);
+
 			d->t->returnBuffer(d->b);
 			uv_fs_req_cleanup(req);
 			delete req;
@@ -699,7 +730,13 @@ protected:
 			req->data = d;
 			uv_mutex_lock(&b->mutex);  // this lock should be ok, b/c write is async
 			HEAVY_DBG_OUT("file: flush() %d bytes", b->handle.len);
+
+			// NOTE: we aren't using this like a normal wrLock. What it's for is to prevent
+			// a file rotation while writing
+			uv_rwlock_wrlock(&wrLock);
+			submittedWrites++;
 			uv_fs_write(owner->loggerLoop, req, fileHandle, (void *) b->handle.base, b->handle.len, -1, write_cb);
+			uv_rwlock_wrunlock(&wrLock);
 //			write_cb(&req);  // debug, skip actual write
 			uv_mutex_unlock(&b->mutex);
 //			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
@@ -744,11 +781,6 @@ protected:
 //			uv_write(req, (uv_stream_t *) &tty, &buf, 1, NULL);
 		}
 	protected:
-
-		rotationOpts filerotation;
-		uint32_t current_size;
-		uint64_t all_files_size;
-
 
 
 		class rotatedFile final {
@@ -801,8 +833,53 @@ protected:
 		TWlib::tw_safeCircular<rotatedFile, LoggerAlloc > rotatedFiles;
 
 		void rotate_files() {
-			// find all rotated files
+			rotatedFile f;
+			int n = rotatedFiles.remaining();
+			while (rotatedFiles.removeMv(f)) {
+				uv_fs_t req;
+				if(filerotation.max_files && ((n+1) > filerotation.max_files)) { // remove file
+					int r = uv_fs_unlink(owner->loggerLoop,&req,f.path,NULL);
+					if(r) {
+						uv_err_t e = uv_last_error(owner->loggerLoop);
+						if(e.code != UV_ENOENT) {
+							ERROR_OUT("file rotation - remove %s: %s\n", f.path, uv_strerror(e));
+						}
+					}
+				} else {  // move file to new name
+					char *newname = rotatedFile::strRotateName(myPath,f.num+1);
+					int r = uv_fs_rename(owner->loggerLoop, &req, f.path, newname, NULL);
+					if(r) {
+						uv_err_t e = uv_last_error(owner->loggerLoop);
+						if(e.code != UV_ENOENT) {
+							ERROR_OUT("file rotation - remove %s: %s\n", f.path, uv_strerror(e));
+						}
+					}
+					free(newname);
+				}
+				n--;
+			}
 			uv_fs_t req;
+			char *p = rotatedFile::strRotateName(myPath,1);
+//			if(filerotation.max_files && ((n+1) > filerotation.max_files)) { // remove file
+				int r = uv_fs_rename(owner->loggerLoop, &req, myPath, p, NULL);
+				if(r) {
+					uv_err_t e = uv_last_error(owner->loggerLoop);
+					if(e.code != UV_ENOENT) {
+						ERROR_OUT("file rotation - remove %s: %s\n", p, uv_strerror(e));
+					}
+				}
+				current_size = 0; // we will use a new file, size is 0
+//			}
+			free(p);
+		}
+
+		bool check_files() {
+			all_files_size = 0;
+			// find all rotated files
+			bool needs_rotation = false;
+			uv_fs_t req;
+			rotatedFiles.clear();
+			// find existing file...
 			int r = uv_fs_stat(owner->loggerLoop, &req, myPath, NULL);
 			if(r) {
 				uv_err_t e = uv_last_error(owner->loggerLoop);
@@ -810,7 +887,11 @@ protected:
 					ERROR_OUT("file rotation: %s\n", uv_strerror(e));
 				}
 			} else {
+				// if the current file is too big - we need to rotate.
+				if(filerotation.max_file_size && filerotation.max_file_size < req.statbuf.st_size)
+					needs_rotation = true;
 				all_files_size += req.statbuf.st_size;
+				current_size = req.statbuf.st_size;
 			}
 
 			int n = 1;
@@ -820,7 +901,7 @@ protected:
 				int r = uv_fs_stat(owner->loggerLoop, &req, f.path, NULL);
 				if(r) {
 					uv_err_t e = uv_last_error(owner->loggerLoop);
-					if(e.code != UV_ENOENT) {
+					if(e.code && e.code != UV_ENOENT) {
 						ERROR_OUT("file rotation [path:%s]: %s\n", f.path, uv_strerror(e));
 					}
 					break;
@@ -832,51 +913,14 @@ protected:
 				}
 			}
 			rotatedFiles.reverse();
-			HEAVY_DBG_OUT("rotate_files: total files = %d total size = %d\n",n,all_files_size);
-			if(filerotation.rotate_on_start || all_files_size > filerotation.max_total_size) {
-				rotatedFile f;
-				while (rotatedFiles.removeMv(f)) {
-					uv_fs_t req;
-					if(filerotation.max_files && ((n+1) > filerotation.max_files)) { // remove file
-						int r = uv_fs_unlink(owner->loggerLoop,&req,f.path,NULL);
-						if(r) {
-							uv_err_t e = uv_last_error(owner->loggerLoop);
-							if(e.code != UV_ENOENT) {
-								ERROR_OUT("file rotation - remove %s: %s\n", f.path, uv_strerror(e));
-							}
-						}
-					} else {  // move file to new name
-						char *newname = rotatedFile::strRotateName(myPath,f.num+1);
-						int r = uv_fs_rename(owner->loggerLoop, &req, f.path, newname, NULL);
-						if(r) {
-							uv_err_t e = uv_last_error(owner->loggerLoop);
-							if(e.code != UV_ENOENT) {
-								ERROR_OUT("file rotation - remove %s: %s\n", f.path, uv_strerror(e));
-							}
-						}
-						free(newname);
-					}
-					n--;
-				}
-				uv_fs_t req;
-				char *p = rotatedFile::strRotateName(myPath,1);
-				if(filerotation.max_files && ((n+1) > filerotation.max_files)) { // remove file
-					int r = uv_fs_rename(owner->loggerLoop, &req, myPath, p, NULL);
-					if(r) {
-						uv_err_t e = uv_last_error(owner->loggerLoop);
-						if(e.code != UV_ENOENT) {
-							ERROR_OUT("file rotation - remove %s: %s\n", p, uv_strerror(e));
-						}
-					}
-				}
-				free(p);
-				n--;
-			}
-
+			if(all_files_size > filerotation.max_total_size)
+				needs_rotation = true;
+			return needs_rotation;
 		}
 
 
 		void post_cstor(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, target_start_info *readydata, targetReadyCB cb) {
+			uv_rwlock_init(&wrLock);
 			readydata->needsAsyncQueue = true;
 			myPath = strdup(path);
 			if(!path) {
@@ -890,8 +934,13 @@ protected:
 //				char *rotatename = rotatedFile::strRotateName(path,1);
 //				DBG_OUT("rotatename: %s", rotatename);
 //				free(rotatename);
-				rotate_files();
 				if(filerotation.enabled) {
+					bool needs_rotate = check_files();
+					HEAVY_DBG_OUT("rotate_files: total files = %d total size = %d\n",rotatedFiles.remaining()+1,all_files_size);
+					if(needs_rotate || filerotation.rotate_on_start) {
+						HEAVY_DBG_OUT("Needs rotate....\n");
+						rotate_files();
+					}
 
 
 					// check for existing rotated files, based on path name
@@ -909,15 +958,15 @@ protected:
 		fileTarget(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, target_start_info *readydata, targetReadyCB cb,
 				rotationOpts rotateopts) :
 				logTarget(buffer_size, id, o, cb, readydata),
-				myPath(NULL), filerotation(rotateopts), sync_n(0),
-				rotatedFiles(MAX_ROTATED_FILES,true), current_size(0), all_files_size(0) {
+				submittedWrites(0), rotatedFiles(MAX_ROTATED_FILES,true), current_size(0), all_files_size(0),
+				myPath(NULL), myMode(mode), myFlags(flags), filerotation(rotateopts), sync_n(0) {
 			post_cstor(buffer_size, id, o, flags, mode, path, readydata, cb);
 		}
 
 		fileTarget(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, target_start_info *readydata, targetReadyCB cb) :
 			logTarget(buffer_size, id, o, cb, readydata),
-			myPath(NULL), filerotation(), sync_n(0),
-			rotatedFiles(MAX_ROTATED_FILES,true), current_size(0), all_files_size(0) {
+			submittedWrites(0), rotatedFiles(MAX_ROTATED_FILES,true), current_size(0), all_files_size(0),
+			myPath(NULL), myMode(mode), myFlags(flags), filerotation(), sync_n(0) {
 			post_cstor(buffer_size, id, o, flags, mode, path, readydata, cb);
 		}
 

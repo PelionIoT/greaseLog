@@ -9,49 +9,50 @@ console.dir(logger);
 var N = 0;
 
 
-logger.addTarget({
-	    file: "testlog.log"
-	},function(targetid,err){
-		if(err) {
-			console.log("error: "+ util.inspect(err));
-		} else {
-			console.log("added target: " + targetid);
-			var ret = logger.addFilter({ 
-				target: targetid,
-				mask: logger.LEVELS.error
-			});
-			console.log("added filter: " + ret);
-			var ret = logger.addFilter({ 
-				target: targetid,
-				mask: logger.LEVELS.debug,
-				tag: 'Eds'
-			});
-			console.log("added filter: " + ret);
-			var ret = logger.addFilter({ 
-				target: targetid,
-				mask: logger.LEVELS.debug,
-				tag: 'Eds',
-				origin: 'special.js'
-			});
-			console.log("added filter: " + ret);
-		}
+// logger.addTarget({
+// 	    file: "testlog.log"
+// 	},function(targetid,err){
+// 		if(err) {
+// 			console.log("error: "+ util.inspect(err));
+// 		} else {
+// 			console.log("added target: " + targetid);
+// 			var ret = logger.addFilter({ 
+// 				target: targetid,
+// 				mask: logger.LEVELS.error
+// 			});
+// 			console.log("added filter: " + ret);
+// 			var ret = logger.addFilter({ 
+// 				target: targetid,
+// 				mask: logger.LEVELS.debug,
+// 				tag: 'Eds'
+// 			});
+// 			console.log("added filter: " + ret);
+// 			var ret = logger.addFilter({ 
+// 				target: targetid,
+// 				mask: logger.LEVELS.debug,
+// 				tag: 'Eds',
+// 				origin: 'special.js'
+// 			});
+// 			console.log("added filter: " + ret);
+// 		}
 
-		for(var n=0;n<1000;n++) {
-			logger.debug("....DEBUG....");
-			logger.debug('Eds', "....DEBUG....");			
-			logger.error("....ERROR....");
-			logger.log(" log log log");
-		}
-		logger.error("************ LAST **********");
-	});
+// 		logger.error("************ FIRST **********");
+// 		for(var n=0;n<1000;n++) {
+// 			logger.debug("....DEBUG....");
+// 			logger.debug('Eds', "....DEBUG....");			
+// 			logger.error("....ERROR....");
+// 			logger.log(" log log log");
+// 		}
+// 		logger.error("************ LAST **********");
+// 	});
 
 logger.addTarget({
 	    file: "rotateThis.log",
 	    rotate: {
 	    	max_files: 5,
 	    	max_file_size:  10000,
-	    	max_total_size: 100000,
-	    	rotate_on_start: true
+	    	max_total_size: 100000
+//	    	,rotate_on_start: true
 	    }
 	},function(targetid,err){
 		if(err) {
@@ -66,9 +67,11 @@ logger.addTarget({
 			});
 		}		
 
-		for(var n=0;n<1000;n++) {
+		logger.debug('rotate',"************ FIRST **********");
+		for(var n=0;n<100000;n++) {
 			logger.debug('rotate',"....rotate me....");
 		}
+		logger.debug('rotate',"************ LAST **********");
 
 	});
 
