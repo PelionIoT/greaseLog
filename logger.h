@@ -459,7 +459,7 @@ protected:
 		}
 
 		void returnBuffer(logBuf *b) {
-			if(logCallbackSet) {
+			if(logCallbackSet && b->handle.len > 0) {
 				writeCBData cbdat(this,b);
 				if(!owner->v8LogCallbacks.addMvIfRoom(cbdat)) {
 					ERROR_OUT(" !!! v8LogCallbacks is full! Can't rotate. Callback will be skipped.");
@@ -484,21 +484,25 @@ protected:
 			bool ret = false;
 			logBuf *next = NULL;
 			uv_mutex_lock(&writeMutex);
-			ret = availBuffers.remove(next);  // won't block
-			if(ret) {
-				ret = writeOutBuffers.addIfRoom(currentBuffer); // won't block
+			if(currentBuffer->handle.len > 0) {
+				ret = availBuffers.remove(next);  // won't block
 				if(ret) {
-					currentBuffer = next;
-				} else {
-					ERROR_OUT(" !!! writeOutBuffers is full! Can't rotate. Data will be lost.");
-					if(!availBuffers.addIfRoom(next)) {  // won't block
-						ERROR_OUT(" !!!!!!!! CRITICAL - can't put Buffer back in availBuffers. Losing Buffer ?!@?!#!@");
+					ret = writeOutBuffers.addIfRoom(currentBuffer); // won't block
+					if(ret) {
+						currentBuffer = next;
+					} else {
+						ERROR_OUT(" !!! writeOutBuffers is full! Can't rotate. Data will be lost.");
+						if(!availBuffers.addIfRoom(next)) {  // won't block
+							ERROR_OUT(" !!!!!!!! CRITICAL - can't put Buffer back in availBuffers. Losing Buffer ?!@?!#!@");
+						}
+						currentBuffer->clear();
 					}
+				} else {
+					ERROR_OUT(" !!! Can't rotate. NO BUFFERS - Overwriting buffer!! Data will be lost. [target %d]", myId);
 					currentBuffer->clear();
 				}
 			} else {
-				ERROR_OUT(" !!! Can't rotate. NO BUFFERS - Overwriting buffer!! Data will be lost. [target %d]", myId);
-				currentBuffer->clear();
+				DBG_OUT("Skipping rotation. No data in current buffer.");
 			}
 //			if(!ret) {
 //				ERROR_OUT(" !!! Can't rotate. Overwriting buffer!! Data will be lost.");
