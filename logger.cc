@@ -217,8 +217,11 @@ GreaseLogger::logTarget::~logTarget() {
 GreaseLogger::logTarget::logTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, target_start_info *readydata) :
 		readyCB(cb),                  // called when the target is ready or has failed to setup
 		readyData(readydata),
+		logCallbackSet(false),
+		logCallback(),
 		availBuffers(NUM_BANKS),
 		writeOutBuffers(NUM_BANKS-1), // there should always be one buffer available for writingTo
+		waitingOnCBBuffers(NUM_BANKS-1),
 		err(), _log_fd(0),
 		currentBuffer(NULL), bankSize(buffer_size), owner(o), myId(id) {
 	uv_mutex_init(&writeMutex);
@@ -339,6 +342,21 @@ void GreaseLogger::start_target_cb(GreaseLogger *l, _errcmn::err_ev &err, void *
 	}
 }
 
+
+void GreaseLogger::callV8LogCallbacks(uv_async_t *h, int status ) {
+	GreaseLogger *l = GreaseLogger::setupClass();
+	GreaseLogger::logTarget::writeCBData data;
+	while(l->v8LogCallbacks.removeMv(data)) {
+		if(!data.t->logCallback.IsEmpty()) {
+			const unsigned argc = 2;
+			Local<Value> argv[argc];
+			argv[0] = String::New( data.b->handle.base, (int) data.b->handle.len );
+			argv[1] = Integer::NewFromUnsigned( data.t->myId );
+			data.t->logCallback->Call(Context::GetCurrent()->Global(),1,argv);
+			data.t->finalizeV8Callback(data.b);
+		}
+	}
+}
 
 void GreaseLogger::callTargetCallback(uv_async_t *h, int status ) {
 	target_start_info *info = NULL;
@@ -462,7 +480,6 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 		Local<Object> jsTarg = args[0]->ToObject();
 		Local<Value> isTty = jsTarg->Get(String::New("tty"));
 		Local<Value> isFile = jsTarg->Get(String::New("file"));
-		Local<Value> isCallback = jsTarg->Get(String::New("callback"));
 
 		int buffsize = l->bufferSize;
 		Local<Value> jsBufSize = jsTarg->Get(String::New("bufferSize"));
@@ -474,9 +491,12 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 		}
 
 		TargetId id;
+		logTarget *targ = NULL;
 		uv_mutex_lock(&l->nextIdMutex);
 		id = l->nextTargetId++;
 		uv_mutex_unlock(&l->nextIdMutex);
+
+		Local<Value> jsCallback = jsTarg->Get(String::New("callback"));
 
 		if(isTty->IsString()) {
 			v8::String::Utf8Value v8str(isTty);
@@ -487,7 +507,7 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 			i->targId = id;
 			if(args.Length() > 0 && args[1]->IsFunction())
 				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
-			new ttyTarget(buffsize, id, l, targetReady, i, v8str.operator *());
+			targ = new ttyTarget(buffsize, id, l, targetReady, i, v8str.operator *());
 		} else if (isFile->IsString()) {
 			Local<Value> jsMode = jsTarg->Get(String::New("mode"));
 			Local<Value> jsFlags = jsTarg->Get(String::New("flags"));
@@ -500,6 +520,7 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 			if(jsFlags->IsInt32()) {
 				flags = jsFlags->Int32Value();
 			}
+
 
 			v8::String::Utf8Value v8str(isFile);
 //			obj->setIfName(v8str.operator *(),v8str.length());
@@ -533,17 +554,17 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 			HEAVY_DBG_OUT("********* NEW target_start_info: %p\n", i);
 
 			if(opts.enabled)
-				new fileTarget(buffsize, id, l, flags, mode, v8str.operator *(), i, targetReady, opts);
+				targ = new fileTarget(buffsize, id, l, flags, mode, v8str.operator *(), i, targetReady, opts);
 			else
-				new fileTarget(buffsize, id, l, flags, mode, v8str.operator *(), i, targetReady);
-		} else if (isCallback->IsFunction()){
-			target_start_info *i = new target_start_info();
-
-			if(args.Length() > 0 && args[1]->IsFunction())
-				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
+				targ = new fileTarget(buffsize, id, l, flags, mode, v8str.operator *(), i, targetReady);
 
 		} else {
-			return ThrowException(Exception::TypeError(String::New("Unknown parameter passed into addTarget()")));
+			return ThrowException(Exception::TypeError(String::New("Unknown target type passed into addTarget()")));
+		}
+
+		if(jsCallback->IsFunction()) {
+			Local<Function> f = Local<Function>::Cast(jsCallback);
+			targ->setCallback(f);
 		}
 	} else {
 		return ThrowException(Exception::TypeError(String::New("Malformed call to addTarget()")));

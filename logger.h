@@ -98,6 +98,7 @@ struct uint64_t_eqstrP {
 
 #define COMMAND_QUEUE_NODE_SIZE 200
 #define INTERNAL_QUEUE_SIZE 200
+#define V8_LOG_CALLBACK_QUEUE_SIZE 10
 #define MAX_TARGET_CALLBACK_STACK 20
 #define TARGET_CALLBACK_QUEUE_WAIT 2000000  // 2 seconds
 #define MAX_ROTATED_FILES 10
@@ -176,6 +177,7 @@ protected:
 	int chunkSize;
 
 	uv_thread_t logThreadId;
+	uv_async_t asyncV8LogCallback;  // used to wakeup v8 to call log callbacks (see v8LogCallbacks)
 	uv_async_t asyncTargetCallback;
 	TWlib::tw_safeCircular<target_start_info  *, LoggerAlloc > targetCallbackQueue;
 	_errcmn::err_ev err;
@@ -199,7 +201,6 @@ protected:
 	// filterMasterTable: uint64_t -> [ filter id list ]
 
 	// { tag: "mystuff", origin: "crazy.js", level" 0x02 }
-
 
 
 	uv_mutex_t nextIdMutex;
@@ -407,14 +408,25 @@ protected:
 		}
 	};
 
+
 	class logTarget {
 	public:
 		typedef void (*targetReadyCB)(bool ready, _errcmn::err_ev &err, logTarget *t);
 		targetReadyCB readyCB;
 		target_start_info *readyData;
 		logBuf *_buffers[NUM_BANKS];
+		bool logCallbackSet; // if true, logCallback (below) is set (we prefer to not touch any v8 stuff, when outside the v8 thread)
+		Persistent<Function>  logCallback;
+		// Queue flow:
+		// 1) un-used logBuf taken out of availBuffers, filled with data
+		// 2) placed in writeOutBuffers for write out
+		// 2) logBuf gets written out (usually in a separate thread)
+		// 3) after being wirrten out, if no 'logCallbac' is assigned, logBuf is returned to availBuffers, OR
+		//    if logCallback is set, then it is queued in waitingOnCBBuffers
+		// 4) when v8 thread becomes active, callback is called, then logBuf is returned to availBuffers
 		TWlib::tw_safeCircular<logBuf *, LoggerAlloc > availBuffers; // buffers which are available for writing
 		TWlib::tw_safeCircular<logBuf *, LoggerAlloc > writeOutBuffers; // buffers which are available for writing
+		TWlib::tw_safeCircular<logBuf *, LoggerAlloc > waitingOnCBBuffers; // buffers which are available for writing
 		_errcmn::err_ev err;
 		int _log_fd;
 
@@ -427,13 +439,45 @@ protected:
 		logTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, target_start_info *readydata = NULL);
 		logTarget() = delete;
 
-		struct writeCBData {
+		class writeCBData final {
+		public:
 			logTarget *t;
 			logBuf *b;
+			writeCBData() : t(NULL), b(NULL) {}
+			writeCBData(logTarget *_t, logBuf *_b) : t(_t), b(_b) {}
+			writeCBData& operator=(writeCBData&& o) {
+				b = o.b;
+				t = o.t;
+				return *this;
+			}
 		};
 
-		void returnBuffer(logBuf *b) {
+		// called when the V8 callback is done
+		void finalizeV8Callback(logBuf *b) {
+			b->clear();
 			availBuffers.add(b);
+		}
+
+		void returnBuffer(logBuf *b) {
+			if(logCallbackSet) {
+				writeCBData cbdat(this,b);
+				if(!owner->v8LogCallbacks.addMvIfRoom(cbdat)) {
+					ERROR_OUT(" !!! v8LogCallbacks is full! Can't rotate. Callback will be skipped.");
+				}
+				uv_async_send(&owner->asyncV8LogCallback);
+			} else {
+				b->clear();
+				availBuffers.add(b);
+			}
+		}
+
+		void setCallback(Local<Function> &func) {
+			uv_mutex_lock(&writeMutex);
+			if(!func.IsEmpty()) {
+				logCallbackSet = true;
+				logCallback = Persistent<Function>::New(func);
+			}
+			uv_mutex_unlock(&writeMutex);
 		}
 
 		bool rotate() {
@@ -533,6 +577,13 @@ protected:
 		virtual ~logTarget();
 	};
 
+	// small helper class used to call log callbacks in v8 thread
+//	class v8LogCallback final {
+//	public:
+//		logBuf *b;
+//		logTarget *t;
+//		v8LogCallback() : b(NULL), t(NULL) {}
+//	};
 
 	class ttyTarget final : public logTarget {
 	public:
@@ -541,7 +592,6 @@ protected:
 		static void write_cb(uv_write_t* req, int status) {
 //			HEAVY_DBG_OUT("write_cb");
 			writeCBData *d = (writeCBData *) req->data;
-			d->b->clear();
 			d->t->returnBuffer(d->b);
 
 			delete req;
@@ -688,7 +738,6 @@ protected:
 			}
 			writeCBData *d = (writeCBData *) req->data;
 			fileTarget *ft = (fileTarget *) d->t;
-			d->b->clear();
 
 			uv_rwlock_wrlock(&ft->wrLock);
 			ft->submittedWrites--;
@@ -974,10 +1023,104 @@ protected:
 
 	};
 
+
+
+	class callbackTarget final : public logTarget {
+	public:
+		int ttyFD;
+		uv_tty_t tty;
+		static void write_cb(uv_write_t* req, int status) {
+//			HEAVY_DBG_OUT("write_cb");
+			writeCBData *d = (writeCBData *) req->data;
+			d->t->returnBuffer(d->b);
+
+			delete req;
+		}
+		static void write_overflow_cb(uv_write_t* req, int status) {
+			HEAVY_DBG_OUT("overflow_cb");
+			overflowBuf *b = (overflowBuf *) req->data;
+			delete b;
+			delete req;
+		}
+
+
+		uv_write_t outReq;  // since this function is no re-entrant (below) we can do this
+		void flush(logBuf *b) { // this will always be called by the logger thread (via uv_async_send)
+			uv_write_t *req = new uv_write_t;
+			writeCBData *d = new writeCBData;
+			d->t = this;
+			d->b = b;
+			req->data = d;
+			uv_mutex_lock(&b->mutex);  // this lock should be ok, b/c write is async
+			HEAVY_DBG_OUT("TTY: flush() %d bytes", b->handle.len);
+			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, write_cb);
+			uv_mutex_unlock(&b->mutex);
+//			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
+		}
+		void flushSync(logBuf *b) { // this will always be called by the logger thread (via uv_async_send)
+			uv_write_t *req = new uv_write_t;
+			writeCBData *d = new writeCBData;
+			d->t = this;
+			d->b = b;
+			req->data = d;
+			uv_mutex_lock(&b->mutex);  // this lock should be ok, b/c write is async
+			HEAVY_DBG_OUT("TTY: flushSync() %d bytes", b->handle.len);
+			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, NULL);
+			uv_mutex_unlock(&b->mutex);
+//			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
+		}
+		void writeAsync(overflowBuf *b) {
+			uv_write_t *req = new uv_write_t;
+			req->data = b;
+			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, write_overflow_cb);
+		}
+		void writeSync(char *s, int l) {
+			uv_write_t *req = new uv_write_t;
+			uv_buf_t buf;
+			buf.base = s;
+			buf.len = l;
+			uv_write(req, (uv_stream_t *) &tty, &buf, 1, NULL);
+		}
+		callbackTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, target_start_info *readydata = NULL, char *ttypath = NULL) : logTarget(buffer_size, id, o, cb, readydata), ttyFD(0)  {
+//			outReq.cb = write_cb;
+			_errcmn::err_ev err;
+			if(ttypath)
+				ttyFD = ::open(ttypath, O_WRONLY, 0);
+			else
+				ttyFD = ::open("/dev/tty", O_WRONLY, 0);
+
+			if(ttyFD >= 0) {
+				tty.loop = o->loggerLoop;
+				int r = uv_tty_init(o->loggerLoop, &tty, ttyFD, READABLE);
+
+				if (r) ERROR_UV("initing tty", r, o->loggerLoop);
+
+				// enable TYY formatting, flow-control, etc.
+//				r = uv_tty_set_mode(&tty, TTY_NORMAL);
+//				DBG_OUT("r = %d\n",r);
+//				if (r) ERROR_UV("setting tty mode", r, o->loggerLoop);
+
+				if(!r)
+					readyCB(true,err,this);
+				else {
+					err.setError(r);
+					readyCB(false,err, this);
+				}
+			} else {
+				err.setError(errno,"Failed to open TTY");
+				readyCB(false,err, this);
+			}
+
+		}
+	};
+
+
 	static void targetReady(bool ready, _errcmn::err_ev &err, logTarget *t);
 
 	TWlib::tw_safeCircular<GreaseLogger::internalCmdReq, LoggerAlloc > internalCmdQueue;
 	TWlib::tw_safeCircular<GreaseLogger::nodeCmdReq, LoggerAlloc > nodeCmdQueue;
+	TWlib::tw_safeCircular<GreaseLogger::logTarget::writeCBData, LoggerAlloc > v8LogCallbacks;
+
 
 
 
@@ -1116,6 +1259,7 @@ protected:
 
 	// calls callbacks when target starts (if target was started in non-v8 thread
 	static void callTargetCallback(uv_async_t *h, int status );
+	static void callV8LogCallbacks(uv_async_t *h, int status );
 	static void start_target_cb(GreaseLogger *l, _errcmn::err_ev &err, void *d);
 	static void start_logger_cb(GreaseLogger *l, _errcmn::err_ev &err, void *d);
 
@@ -1127,6 +1271,7 @@ protected:
 //    	showNoLevel(true), showNoTag(true), showNoOrigin(true),
     	internalCmdQueue( INTERNAL_QUEUE_SIZE, true ),
     	nodeCmdQueue( COMMAND_QUEUE_NODE_SIZE, true ),
+    	v8LogCallbacks( V8_LOG_CALLBACK_QUEUE_SIZE, true ),
     	levelFilterOutMask(0), // tagFilter(), originFilter(),
     	defaultFilterOut(false),
 //    	filterTable(),
@@ -1137,6 +1282,7 @@ protected:
     	    LOGGER = this;
     	    loggerLoop = uv_loop_new();    // we use our *own* event loop (not the node/io.js one)
     	    uv_async_init(uv_default_loop(), &asyncTargetCallback, callTargetCallback);
+    	    uv_async_init(uv_default_loop(), &asyncV8LogCallback, callV8LogCallbacks);
     	    uv_unref((uv_handle_t *)&asyncTargetCallback);
     	    uv_mutex_init(&nextIdMutex);
     		uv_mutex_init(&modifyFilters);

@@ -46,8 +46,13 @@ var N = 0;
 // 		logger.error("************ LAST **********");
 // 	});
 
+var testCallback = function(str,id) {
+	console.log("CB (" + id + ")>" + str + "<");
+}
+
 logger.addTarget({
 	    file: "rotateThis.log",
+	    callback: testCallback,
 	    rotate: {
 	    	max_files: 5,
 	    	max_file_size:  10000,
