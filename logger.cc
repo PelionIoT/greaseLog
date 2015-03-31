@@ -689,10 +689,9 @@ void GreaseLogger::_logSync(FilterList *list, logMeta &meta, char *s, int len) {
 }
 
 
-
 void GreaseLogger::Init() {
 	Local<FunctionTemplate> tpl = FunctionTemplate::New(New);
-	tpl->SetClassName(String::NewSymbol("TunInterface"));
+	tpl->SetClassName(String::NewSymbol("GreaseLogger"));
 	tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
 	tpl->PrototypeTemplate()->SetInternalFieldCount(2);

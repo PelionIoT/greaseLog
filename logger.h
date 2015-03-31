@@ -41,6 +41,8 @@ using namespace v8;
 #include <google/tcmalloc.h>
 
 #define LMALLOC tc_malloc_skip_new_handler
+#define LCALLOC tc_calloc
+#define LREALLOC tc_realloc
 #define LFREE tc_free
 
 namespace Grease {
@@ -54,7 +56,21 @@ typedef uint32_t LevelMask;    // id is always > 0
 
 using namespace TWlib;
 
-typedef TWlib::Allocator<TWlib::Alloc_Std> LoggerAlloc;
+struct Alloc_LMALLOC {
+	static void *malloc (tw_size nbytes) {  return LMALLOC((int) nbytes); }
+	static void *calloc (tw_size nelem, tw_size elemsize) { return LCALLOC((size_t) nelem,(size_t) elemsize); }
+	static void *realloc(void *d, tw_size s) { return LREALLOC(d,(size_t) s); }
+	static void free(void *p) { LFREE(p); }
+	static void sync(void *addr, tw_size len, int flags = 0) { } // does nothing - not shared memory
+	static void *memcpy(void *d, const void *s, size_t n) { return ::memcpy(d,s,n); };
+	static void *memmove(void *d, const void *s, size_t n) { return ::memmove(d,s,n); };
+	static int memcmp(void *l, void *r, size_t n) { return ::memcmp(l, r, n); }
+	static void *memset(void *d, int c, size_t n) { return ::memset(d,c,n); }
+	static const char *ALLOC_NOMEM_ERROR_MESSAGE;
+};
+
+
+typedef TWlib::Allocator<Alloc_LMALLOC> LoggerAlloc;
 
 
 struct uint32_t_eqstrP {
@@ -269,13 +285,13 @@ protected:
 		int id;
 		int space;
 		logBuf(int s, int id) : id(id), space(s) {
-			handle.base = (char *) ::malloc(space);
+			handle.base = (char *) LMALLOC(space);
 			handle.len = 0;
 			uv_mutex_init(&mutex);
 		}
 		logBuf() = delete;
 		~logBuf() {
-			if(handle.base) ::free(handle.base);
+			if(handle.base) LFREE(handle.base);
 		}
 		void copyIn(char *s, int n) {
 			uv_mutex_lock(&mutex);
@@ -716,9 +732,6 @@ protected:
 		char *myPath;
 		int myMode; int myFlags;
 
-
-
-
 		static void on_open(uv_fs_t *req) {
 			uv_fs_req_cleanup(req);
 			fileTarget *t = (fileTarget *) req->data;
@@ -734,6 +747,21 @@ protected:
 			}
 		}
 
+		static void on_open_for_rotate(uv_fs_t *req) {
+			uv_fs_req_cleanup(req);
+			fileTarget *t = (fileTarget *) req->data;
+			_errcmn::err_ev err;
+			if (req->result >= 0) {
+				HEAVY_DBG_OUT("file: on_open() -> FD is %d", req->result);
+				t->fileHandle = req->result;
+//				t->readyCB(true,err,t);
+			} else {
+				ERROR_OUT("Error opening file %s\n", t->myPath);
+				err.setError(req->errorno);
+//				t->readyCB(false,err,t);
+			}
+		}
+
 		static void write_cb(uv_fs_t* req) {
 //			HEAVY_DBG_OUT("write_cb");
 			HEAVY_DBG_OUT("file: write_cb()");
@@ -746,6 +774,7 @@ protected:
 			uv_rwlock_wrlock(&ft->wrLock);
 			ft->submittedWrites--;
 
+			HEAVY_DBG_OUT("sub: %d\n",ft->submittedWrites);
 			// TODO - check for file rotation
 			if(ft->submittedWrites < 1 && ft->filerotation.enabled) {
 				if(ft->current_size > ft->filerotation.max_file_size) {
@@ -755,7 +784,7 @@ protected:
 					ft->rotate_files();
 					// TODO open new file..
 					int r = uv_fs_open(ft->owner->loggerLoop, &ft->fileFs, ft->myPath, ft->myFlags, ft->myMode, NULL); // use default loop because we need on_open() cb called in event loop of node.js
-					on_open(&ft->fileFs);
+					on_open_for_rotate(&ft->fileFs);
 				}
 			}
 			uv_rwlock_wrunlock(&ft->wrLock);
@@ -784,7 +813,7 @@ protected:
 			req->data = d;
 			uv_mutex_lock(&b->mutex);  // this lock should be ok, b/c write is async
 			HEAVY_DBG_OUT("file: flush() %d bytes", b->handle.len);
-
+			current_size += b->handle.len;
 			// NOTE: we aren't using this like a normal wrLock. What it's for is to prevent
 			// a file rotation while writing
 			uv_rwlock_wrlock(&wrLock);
@@ -807,6 +836,7 @@ protected:
 //			sync_n++;
 //			if(sync_n >= 4) sync_n = 0;
 			uv_fs_t *req = new uv_fs_t;
+			req->data = this;
 			uv_fs_fsync(owner->loggerLoop, req, fileHandle, sync_cb);
 		}
 		void flushSync(logBuf *b) { // this will always be called by the logger thread (via uv_async_send)
@@ -848,10 +878,14 @@ protected:
 				ownMem = true;
 			}
 			rotatedFile(internalCmdReq &) = delete;
+			rotatedFile(rotatedFile && o) : path(o.path), size(o.size), num(o.num), ownMem(true) {
+				o.path = NULL;
+				o.ownMem = false;
+			}
 			rotatedFile() : path(NULL), size(0), num(0), ownMem(false) {};
 			rotatedFile& operator=(rotatedFile& o) {
 				if(path && ownMem)
-					::free(path);
+					LFREE(path);
 				path = o.path;
 				size = o.size;
 				num = o.num;
@@ -860,7 +894,7 @@ protected:
 			}
 			rotatedFile& operator=(rotatedFile&& o) {
 				if(path && ownMem)
-					::free(path);
+					LFREE(path);
 				path = o.path; o.path = NULL;
 				size = o.size;
 				num = o.num;
@@ -869,13 +903,13 @@ protected:
 			}
 			~rotatedFile() {
 				if(path && ownMem)
-					::free(path);
+					LFREE(path);
 			}
 			static char *strRotateName(char *s, int n) {
 				char *ret = NULL;
 				if(s && n < MAX_ROTATED_FILES && n > 0) {
 					int origL = strlen(s);
-					ret = (char *) malloc(origL+10);
+					ret = (char *) LMALLOC(origL+10);
 					memset(ret,0,origL+10);
 					memcpy(ret,s,origL);
 					snprintf(ret+origL,9,".%d",n);
@@ -888,6 +922,7 @@ protected:
 
 		void rotate_files() {
 			rotatedFile f;
+			TWlib::tw_safeCircular<rotatedFile, LoggerAlloc > tempFiles(MAX_ROTATED_FILES,true);
 			int n = rotatedFiles.remaining();
 			while (rotatedFiles.removeMv(f)) {
 				uv_fs_t req;
@@ -900,31 +935,37 @@ protected:
 						}
 					}
 				} else {  // move file to new name
-					char *newname = rotatedFile::strRotateName(myPath,f.num+1);
-					int r = uv_fs_rename(owner->loggerLoop, &req, f.path, newname, NULL);
+//					char *newname = rotatedFile::strRotateName(myPath,f.num+1);
+					rotatedFile new_f(myPath,f.num+1);
+					int r = uv_fs_rename(owner->loggerLoop, &req, f.path, new_f.path, NULL);
 					if(r) {
 						uv_err_t e = uv_last_error(owner->loggerLoop);
-						if(e.code != UV_ENOENT) {
-							ERROR_OUT("file rotation - remove %s: %s\n", f.path, uv_strerror(e));
+						if(e.code != UV_OK) {
+							ERROR_OUT("file rotation - rename %s: %s\n", f.path, uv_strerror(e));
+						} else {
 						}
+//						if(e.code != UV_ENOENT) {
+//							ERROR_OUT("file rotation - rename %s: %s\n", f.path, uv_strerror(e));
+//						}
 					}
-					free(newname);
+					tempFiles.addMv(new_f);
 				}
 				n--;
 			}
 			uv_fs_t req;
-			char *p = rotatedFile::strRotateName(myPath,1);
-//			if(filerotation.max_files && ((n+1) > filerotation.max_files)) { // remove file
-				int r = uv_fs_rename(owner->loggerLoop, &req, myPath, p, NULL);
-				if(r) {
-					uv_err_t e = uv_last_error(owner->loggerLoop);
-					if(e.code != UV_ENOENT) {
-						ERROR_OUT("file rotation - remove %s: %s\n", p, uv_strerror(e));
-					}
+			rotatedFile new_f(myPath,1);
+
+			int r = uv_fs_rename(owner->loggerLoop, &req, myPath, new_f.path, NULL);
+			if(r) {
+				uv_err_t e = uv_last_error(owner->loggerLoop);
+				if(e.code != UV_OK) {
+					ERROR_OUT("file rotation - rename %s: %s\n", new_f.path, uv_strerror(e));
+				} else {
 				}
-				current_size = 0; // we will use a new file, size is 0
-//			}
-			free(p);
+			} else
+				tempFiles.addMv(new_f);
+			rotatedFiles.transferFrom(tempFiles);
+			current_size = 0; // we will use a new file, size is 0
 		}
 
 		bool check_files() {

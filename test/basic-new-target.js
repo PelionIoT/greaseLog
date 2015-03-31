@@ -52,7 +52,7 @@ logger.addTarget({
 	    	max_files: 5,
 	    	max_file_size:  10000,
 	    	max_total_size: 100000
-//	    	,rotate_on_start: true
+	    	,rotate_on_start: true
 	    }
 	},function(targetid,err){
 		if(err) {
@@ -67,11 +67,21 @@ logger.addTarget({
 			});
 		}		
 
+		var N = 40000;
 		logger.debug('rotate',"************ FIRST **********");
-		for(var n=0;n<1000;n++) {
-			logger.debug('rotate',"....rotate me....");
-		}
-		logger.debug('rotate',"************ LAST **********");
+		var i =	setInterval(function(){
+			N = N - 200;
+			for(var n=0;n<200;n++)
+				logger.debug('rotate',"....rotate me ["+(N-n+200)+"]....");
+			if(N == 0) {
+				logger.debug('rotate',"************ LAST **********");
+				clearInterval(i);
+			}
+		},100);
+
+		// for(var n=0;n<200000;n++) {
+		// 	logger.debug('rotate',"....rotate me....");
+		// }
 
 	});
 

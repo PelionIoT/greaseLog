@@ -45,7 +45,7 @@
 
     'configurations': {
       'Debug': {
-        'defines': [ 'ERRCMN_DEBUG_BUILD' ], # , 'LOGGER_HEAVY_DEBUG'
+        'defines': [ 'ERRCMN_DEBUG_BUILD', 'LOGGER_HEAVY_DEBUG' ], # , 'LOGGER_HEAVY_DEBUG'
         "cflags": [
           "-Wall",
           "-std=c++11",
