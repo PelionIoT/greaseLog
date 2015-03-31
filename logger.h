@@ -119,8 +119,6 @@ struct uint64_t_eqstrP {
 #define TARGET_CALLBACK_QUEUE_WAIT 2000000  // 2 seconds
 #define MAX_ROTATED_FILES 10
 
-#define LOGGER_DEFAULT_CHUNK_SIZE  1500
-#define DEFAULT_BUFFER_SIZE  2000
 
 #define DEFAULT_TARGET 0
 #define DEFAULT_ID 0
@@ -136,7 +134,12 @@ struct uint64_t_eqstrP {
 #define NOTREADABLE 0
 #define READABLE    1
 
-#define NUM_BANKS 3
+// use these to fix "NO BUFFERS" ... greaseLog will never block if it's IO can't keep up with logging
+// and instead will drop log info
+#define NUM_BANKS 4
+#define LOGGER_DEFAULT_CHUNK_SIZE  1500
+#define DEFAULT_BUFFER_SIZE  2000
+//
 
 
 
@@ -284,19 +287,30 @@ protected:
 		uv_mutex_t mutex;
 		int id;
 		int space;
-		logBuf(int s, int id) : id(id), space(s) {
+		char *delim;  // delimeter - add to end of each log entry
+		int delimLen;
+		logBuf(int s, int id, char *_delim=NULL) : id(id), space(s), delim(NULL), delimLen(0) {
 			handle.base = (char *) LMALLOC(space);
 			handle.len = 0;
+			if(_delim) {
+				delim = strdup(_delim);
+				delimLen = strlen(delim);
+			}
 			uv_mutex_init(&mutex);
 		}
 		logBuf() = delete;
 		~logBuf() {
+			if(delim) ::free(delim);
 			if(handle.base) LFREE(handle.base);
 		}
 		void copyIn(char *s, int n) {
 			uv_mutex_lock(&mutex);
 			memcpy((void *) (handle.base + handle.len), s, n);
 			handle.len += n;
+			if(delim) {
+				memcpy((void *) (handle.base + handle.len), delim, delimLen);
+				handle.len += delimLen;
+			}
 			uv_mutex_unlock(&mutex);
 		}
 		void clear() {
@@ -308,6 +322,7 @@ protected:
 			int ret = 0;
 			uv_mutex_lock(&mutex);
 			ret = space - handle.len;
+			if(delim) ret = ret - delimLen;
 			uv_mutex_unlock(&mutex);
 			return ret;
 		}
@@ -433,6 +448,7 @@ protected:
 		logBuf *_buffers[NUM_BANKS];
 		bool logCallbackSet; // if true, logCallback (below) is set (we prefer to not touch any v8 stuff, when outside the v8 thread)
 		Persistent<Function>  logCallback;
+		char *delim; int delimLen;
 		// Queue flow:
 		// 1) un-used logBuf taken out of availBuffers, filled with data
 		// 2) placed in writeOutBuffers for write out
@@ -452,7 +468,7 @@ protected:
 		int bankSize;
 		GreaseLogger *owner;
 		uint32_t myId;
-		logTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, target_start_info *readydata = NULL);
+		logTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, char *_delim = NULL, target_start_info *readydata = NULL);
 		logTarget() = delete;
 
 		class writeCBData final {
@@ -661,7 +677,8 @@ protected:
 			buf.len = l;
 			uv_write(req, (uv_stream_t *) &tty, &buf, 1, NULL);
 		}
-		ttyTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, target_start_info *readydata = NULL, char *ttypath = NULL) : logTarget(buffer_size, id, o, cb, readydata), ttyFD(0)  {
+		ttyTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, char *_delim = NULL, target_start_info *readydata = NULL,  char *ttypath = NULL)
+		   : logTarget(buffer_size, id, o, cb, _delim, readydata), ttyFD(0)  {
 //			outReq.cb = write_cb;
 			_errcmn::err_ev err;
 			if(ttypath)
@@ -1050,16 +1067,16 @@ protected:
 		}
 
 	public:
-		fileTarget(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, target_start_info *readydata, targetReadyCB cb,
+		fileTarget(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, char *_delim, target_start_info *readydata, targetReadyCB cb,
 				rotationOpts rotateopts) :
-				logTarget(buffer_size, id, o, cb, readydata),
+				logTarget(buffer_size, id, o, cb, _delim, readydata),
 				submittedWrites(0), rotatedFiles(MAX_ROTATED_FILES,true), current_size(0), all_files_size(0),
 				myPath(NULL), myMode(mode), myFlags(flags), filerotation(rotateopts), sync_n(0) {
 			post_cstor(buffer_size, id, o, flags, mode, path, readydata, cb);
 		}
 
-		fileTarget(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, target_start_info *readydata, targetReadyCB cb) :
-			logTarget(buffer_size, id, o, cb, readydata),
+		fileTarget(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, char *_delim, target_start_info *readydata, targetReadyCB cb) :
+			logTarget(buffer_size, id, o, cb, _delim, readydata),
 			submittedWrites(0), rotatedFiles(MAX_ROTATED_FILES,true), current_size(0), all_files_size(0),
 			myPath(NULL), myMode(mode), myFlags(flags), filerotation(), sync_n(0) {
 			post_cstor(buffer_size, id, o, flags, mode, path, readydata, cb);
@@ -1126,7 +1143,8 @@ protected:
 			buf.len = l;
 			uv_write(req, (uv_stream_t *) &tty, &buf, 1, NULL);
 		}
-		callbackTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, target_start_info *readydata = NULL, char *ttypath = NULL) : logTarget(buffer_size, id, o, cb, readydata), ttyFD(0)  {
+		callbackTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, char *delim = NULL, target_start_info *readydata = NULL,  char *ttypath = NULL)
+		   : logTarget(buffer_size, id, o, cb, delim, readydata), ttyFD(0)  {
 //			outReq.cb = write_cb;
 			_errcmn::err_ev err;
 			if(ttypath)

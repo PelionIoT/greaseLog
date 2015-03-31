@@ -53,6 +53,7 @@ var testCallback = function(str,id) {
 logger.addTarget({
 	    file: "rotateThis.log",
 	    callback: testCallback,
+	    delim: '\n', // separate each entry with a hard return
 	    rotate: {
 	    	max_files: 5,
 	    	max_file_size:  10000,
@@ -71,12 +72,19 @@ logger.addTarget({
 				// mask: logger.LEVELS.ALL
 			});
 		}		
-
+		var N = 1000;
 		logger.debug('rotate',"************ FIRST **********");
-		for(var n=0;n<1000;n++) {
-			logger.debug('rotate',"....rotate me....");
-		}
-		logger.debug('rotate',"************ LAST **********");
+		var I = setInterval(function(){
+			for(var n=0;n<10;n++) {
+				logger.debug('rotate',"....rotate me ["+N+"]....");
+				N--;
+			}
+			if(N == 0) {
+				clearInterval(I);
+				logger.debug('rotate',"************ LAST **********");	
+			}
+		},10);
+
 
 	});
 
