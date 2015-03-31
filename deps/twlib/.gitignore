@@ -27,5 +27,5 @@ test_rbtree
 /test_twcircular_slow_consumer
 /test_twcircular_array
 /.csettings/
-*.cproject
-*.project
+/test_twcircular_unblockall
+/test_twcircular_array_transfer
