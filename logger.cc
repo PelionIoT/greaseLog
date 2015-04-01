@@ -108,12 +108,12 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
 			break;
     	case INTERNAL_SHUTDOWN:
     	{
+
     		// disable timer
     		uv_timer_stop(&LOGGER->flushTimer);
     		// disable all queues
     		uv_close((uv_handle_t *)&LOGGER->asyncExternalCommand, NULL);
     		uv_close((uv_handle_t *)&LOGGER->asyncInternalCommand, NULL);
-    		uv_unref((uv_handle_t *)&LOGGER->flushTimer);
     		// flush all queues
     		flushAllSync();
     		// kill thread
@@ -162,6 +162,7 @@ void GreaseLogger::mainThread(void *p) {
 
 
 	uv_timer_init(SELF->loggerLoop, &SELF->flushTimer);
+	uv_unref((uv_handle_t *)&LOGGER->flushTimer);
 	uv_timer_start(&SELF->flushTimer, flushTimer_cb, 2000, 500);
 	uv_async_init(SELF->loggerLoop, &SELF->asyncInternalCommand, handleInternalCmd);
 	uv_async_init(SELF->loggerLoop, &SELF->asyncExternalCommand, handleExternalCmd);

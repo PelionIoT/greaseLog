@@ -1346,6 +1346,7 @@ protected:
     	    loggerLoop = uv_loop_new();    // we use our *own* event loop (not the node/io.js one)
     	    uv_async_init(uv_default_loop(), &asyncTargetCallback, callTargetCallback);
     	    uv_async_init(uv_default_loop(), &asyncV8LogCallback, callV8LogCallbacks);
+    	    uv_unref((uv_handle_t *)&asyncV8LogCallback);
     	    uv_unref((uv_handle_t *)&asyncTargetCallback);
     	    uv_mutex_init(&nextIdMutex);
     		uv_mutex_init(&modifyFilters);
