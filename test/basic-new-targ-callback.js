@@ -53,7 +53,7 @@ var testCallback = function(str,id) {
 logger.addTarget({
 	    file: "rotateThis.log",
 	    callback: testCallback,
-	    delim: '\n', // separate each entry with a hard return
+	    delim: '', // separate each entry with a hard return
 	    rotate: {
 	    	max_files: 5,
 	    	max_file_size:  10000,

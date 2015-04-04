@@ -17,6 +17,7 @@
 #include <TW/tw_fifo.h>
 #include <TW/tw_khash.h>
 
+#include "grease_client.h"
 #include "error-common.h"
 
 using namespace Grease;
@@ -98,7 +99,7 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
 			{
 				DBG_OUT("WRITE_TARGET_OVERFLOW");
 				t->flushAll();
-				overflowBuf *big = (overflowBuf *) req.aux;
+				heapBuf *big = (heapBuf *) req.aux;
 				t->writeAsync(big);
 //				delete big; // handled by callback
 
@@ -171,17 +172,76 @@ void GreaseLogger::mainThread(void *p) {
 
 }
 
-void GreaseLogger::log(GreaseLogger::logMeta &f, char *s, int len) { // does the work of logging
+int GreaseLogger::log(logMeta &f, char *s, int len) { // does the work of logging
 	FilterList *list = NULL;
 	if(sift(f,list)) {
-		_log(list,f,s,len);
-	}
+		return _log(list,f,s,len);
+	} else
+		return GREASE_OK;
 }
-void GreaseLogger::logSync(GreaseLogger::logMeta &f, char *s, int len) { // does the work of logging. now. will empty any buffers first.
+
+
+/**
+ * create a log entry for use across the network to Grease.
+ * Memory layout: [PREAMBLE][Length (type RawLogLen)][logMeta][logdata - string - no null termination]
+ * @param f a pointer to a meta data for logging. If NULL, it will be empty meta data
+ * @param s string to log
+ * @param len length of the passed in string
+ * @param tobuf A raw buffer to store the log output ready for processing
+ * @param len A pointer to an int. This will be read to know the existing length of the buffer, and then set
+ * the size of the buffer that should be sent
+ * @return returns GREASE_OK if successful, or GREASE_NO_BUFFER if the buffer is too small. If parameters are
+ * invalid returns GREASE_INVALID_PARAMS
+ */
+int logToRaw(logMeta *f, char *s, RawLogLen len, char *tobuf, int *buflen) {
+	if(!tobuf || *buflen < (GREASE_RAWBUF_MIN_SIZE + len))  // sanity check
+		return GREASE_NO_BUFFER;
+	int w = 0;
+
+	memcpy(tobuf,&__grease_preamble,SIZEOF_SINK_LOG_PREAMBLE);
+	w += SIZEOF_SINK_LOG_PREAMBLE;
+	RawLogLen _len =sizeof(logMeta) + sizeof(RawLogLen) + w;
+	memcpy(tobuf+w,&_len,sizeof(RawLogLen));
+	w += sizeof(RawLogLen);
+	if(f)
+		memcpy(tobuf+w,f,sizeof(logMeta));
+	else
+		memcpy(tobuf+w,&__noMetaData,sizeof(logMeta));
+	w += sizeof(logMeta);
+	if(s && len > 0) {
+		memcpy(tobuf+w,s,len);
+	}
+	*buflen = len;
+	return GREASE_OK;
+}
+
+
+
+int GreaseLogger::logFromRaw(char *base, int len) {
+	logMeta m;
+	RawLogLen l;
+	if(len >= GREASE_RAWBUF_MIN_SIZE) {
+		memcpy(&l,base+SIZEOF_SINK_LOG_PREAMBLE,sizeof(RawLogLen));
+		if(l > GREASE_MAX_MESSAGE_SIZE)  // don't let crazy memory blocks through.
+			return GREASE_OVERFLOW;
+		memcpy(&m,base+GREASE_CLIENT_HEADER_SIZE,sizeof(logMeta));
+		if(l > 0 && l < GREASE_MAX_MESSAGE_SIZE) {
+			return log(m,base+GREASE_CLIENT_HEADER_SIZE+sizeof(logMeta),l);
+		} else {
+			ERROR_OUT("logFromRaw: message size out of range: %d\n",l);
+		}
+		return GREASE_OK;
+	} else
+		return GREASE_NO_BUFFER;
+}
+
+
+int GreaseLogger::logSync(logMeta &f, char *s, int len) { // does the work of logging. now. will empty any buffers first.
 	FilterList *list = NULL;
 	if(sift(f,list)) {
-		_logSync(list,f,s,len);
-	}
+		return _logSync(list,f,s,len);
+	} else
+		return GREASE_OK;
 }
 void GreaseLogger::flushAll() { // flushes buffers. Synchronous
 	if(LOGGER->defaultTarget) {
@@ -211,6 +271,7 @@ void GreaseLogger::flushAllSync() { // flushes buffers. Synchronous
 		iter.getNext();
 	}
 }
+
 GreaseLogger::logTarget::~logTarget() {
 
 }
@@ -456,6 +517,20 @@ Handle<Value> GreaseLogger::RemoveFilter(const Arguments& args) {
 }
 
 
+/**
+ * obj = {
+ *    pipe: "/var/mysink"   // currently our only option is a named socket / pipe
+ * }
+ */
+Handle<Value> GreaseLogger::AddSink(const Arguments& args) {
+	HandleScope scope;
+	GreaseLogger *l = GreaseLogger::setupClass();
+
+
+
+
+	return scope.Close(Undefined());
+};
 
 
 /**
@@ -669,9 +744,11 @@ Handle<Value> GreaseLogger::Flush(const Arguments& args) {
 
 }
 
-void GreaseLogger::_log(FilterList *list, logMeta &meta, char *s, int len) { // internal log cmd
+int GreaseLogger::_log(FilterList *list, logMeta &meta, char *s, int len) { // internal log cmd
 //	HEAVY_DBG_OUT("out len: %d\n",len);
 //	DBG_OUT("meta.level %x",meta.level);
+	if(len > GREASE_MAX_MESSAGE_SIZE)
+		return GREASE_OVERFLOW;
 	if(!list) {
 		defaultTarget->write(s,len);
 	} else if (list->valid(meta.level)) {
@@ -689,9 +766,12 @@ void GreaseLogger::_log(FilterList *list, logMeta &meta, char *s, int len) { // 
 //		HEAVY_DBG_OUT("pass thru to default");
 		defaultTarget->write(s,len);
 	}
+	return GREASE_OK;
 }
 
-void GreaseLogger::_logSync(FilterList *list, logMeta &meta, char *s, int len) { // internal log cmd
+int GreaseLogger::_logSync(FilterList *list, logMeta &meta, char *s, int len) { // internal log cmd
+	if(len > GREASE_MAX_MESSAGE_SIZE)
+		return GREASE_OVERFLOW;
 	if(!list) {
 		defaultTarget->writeSync(s,len);
 	} else {
@@ -706,6 +786,7 @@ void GreaseLogger::_logSync(FilterList *list, logMeta &meta, char *s, int len) {
 			n++;
 		}
 	}
+	return GREASE_OK;
 }
 
 
@@ -734,6 +815,7 @@ void GreaseLogger::Init() {
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addFilter"), FunctionTemplate::New(AddFilter)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("removeFilter"), FunctionTemplate::New(RemoveFilter)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addTarget"), FunctionTemplate::New(AddTarget)->GetFunction());
+	tpl->InstanceTemplate()->Set(String::NewSymbol("addSink"), FunctionTemplate::New(AddSink)->GetFunction());
 
 //	tpl->InstanceTemplate()->Set(String::NewSymbol("setupFilter"), FunctionTemplate::New(SetupFilter)->GetFunction());
 

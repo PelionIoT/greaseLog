@@ -36,6 +36,7 @@ using namespace v8;
 #include <TW/tw_khash.h>
 #include <TW/tw_circular.h>
 
+#include "grease_client.h"
 #include "error-common.h"
 
 #include <google/tcmalloc.h>
@@ -47,12 +48,7 @@ using namespace v8;
 
 namespace Grease {
 
-typedef uint64_t FilterHash;   // format: [N1N2] where N1 is [Tag id] and N2 is [Origin Id]
-typedef uint32_t FilterId;     // filter id is always > 0
-typedef uint32_t TargetId;     // id is always > 0
-typedef uint32_t OriginId;     // id is always > 0
-typedef uint32_t TagId;        // id is always > 0
-typedef uint32_t LevelMask;    // id is always > 0
+
 
 using namespace TWlib;
 
@@ -139,7 +135,11 @@ struct uint64_t_eqstrP {
 #define NUM_BANKS 4
 #define LOGGER_DEFAULT_CHUNK_SIZE  1500
 #define DEFAULT_BUFFER_SIZE  2000
-//
+// Sink settings
+#define SINK_BUFFER_SIZE (4096*2)
+#define BUFFERS_PER_SINK 4
+
+
 
 
 
@@ -227,6 +227,40 @@ protected:
 	TargetId nextTargetId;
 
 
+	class heapBuf final {
+	public:
+		class heapBufManager {
+		public:
+			virtual void returnBuffer(heapBuf *b) = 0;
+		};
+		heapBufManager *return_cb;
+		uv_buf_t handle;
+//		uv_buf_t getUvBuf() {
+//			return uv_buf_init(handle.base,handle.len);
+//		}
+		explicit heapBuf(int n) : return_cb(NULL) {
+			handle.len = n;
+			handle.base = (char *) LMALLOC(n);
+		}
+		heapBuf(char *d, int n) : return_cb(NULL) {
+			handle.len = n;
+			handle.base = (char *) LMALLOC(n);
+			memcpy(handle.base,d,n);
+		}
+		void malloc(int n) {
+			if(handle.base) LFREE(handle.base);
+			handle.len = n;
+			handle.base = (char *) LMALLOC(handle.len);
+		}
+		void returnBuf() {
+			if(return_cb) return_cb->returnBuffer(this);
+		}
+		explicit heapBuf() : return_cb(NULL) { handle.base = NULL; };
+		~heapBuf() {
+			if(handle.base) LFREE(handle.base);
+		}
+	};
+
 	class Filter final {
 	public:
 		FilterId id;
@@ -271,16 +305,229 @@ protected:
 	};
 
 
+	class Sink {
+		static void parseAndLog() {
+
+		}
 
 
-	class logMeta final {   // meta data for each log entry
-	public:
-		uint32_t tag;    // 0 means no tag
-		uint32_t level;  // 0 means no level
-		uint32_t origin; // 0 means no origin
+		void bind() {
 
-		uint32_t target; // 0 means default target
+		}
+		void start() {
+
+		}
+		void shutdown() {
+
+		}
 	};
+
+
+
+
+	class PipeSink final : public Sink, public heapBuf::heapBufManager {
+	protected:
+		TWlib::tw_safeCircular<heapBuf *, LoggerAlloc > buffers;
+		struct PipeClient {
+			char temp[SINK_BUFFER_SIZE];
+			enum _state {
+				NEED_PREAMBLE,
+				IN_PREAMBLE,
+				IN_LOG_ENTRY    // have log_entry_size
+			};
+			int temp_used;
+			int state_remain;
+			int log_entry_size;
+			_state state;
+			uv_pipe_t client;
+			PipeSink *self;
+			PipeClient() = delete;
+			PipeClient(PipeSink *_self) :
+				temp_used(0),
+				state_remain(GREASE_CLIENT_HEADER_SIZE),  // the initial state requires preamble + size(uint32_t)
+				log_entry_size(0),
+				state(NEED_PREAMBLE), self(_self) {
+				uv_pipe_init(_self->loop, &client, 0);
+				client.data = this;
+			}
+			void resetState() {
+				state = NEED_PREAMBLE;
+				state_remain = GREASE_CLIENT_HEADER_SIZE;
+				temp_used = 0;
+				log_entry_size = 0;
+			}
+			void close() {
+
+			}
+			static void on_close(uv_handle_t *t) {
+				PipeClient *c = (PipeClient *) t->data;
+				delete c;
+			}
+			static void on_read(uv_stream_t* handle, ssize_t nread, uv_buf_t buf) {
+				PipeClient *c = (PipeClient *) handle->data;
+				if(nread == -1) {
+					// time to shutdown - client left...
+					uv_close((uv_handle_t *)&c->client, PipeClient::on_close);
+					DBG_OUT("PipeSink client disconnect.\n");
+				} else {
+					int walk = 0;
+					while(walk < buf.len) {
+						switch(c->state) {
+							case NEED_PREAMBLE:
+								if(buf.len >= GREASE_CLIENT_HEADER_SIZE) {
+									if(IS_SINK_PREAMBLE(buf.base)) {
+										c->state = IN_LOG_ENTRY;
+										GET_SIZE_FROM_PREAMBLE(buf.base,c->log_entry_size);
+									} else {
+										DBG_OUT("PipeClient: Bad state. resetting.\n");
+										c->resetState();
+									}
+									walk += GREASE_CLIENT_HEADER_SIZE;
+								} else {
+									c->state_remain = SIZEOF_SINK_LOG_PREAMBLE - buf.len;
+									memcpy(c->temp+c->temp_used, buf.base+walk,buf.len);
+									c->state = IN_PREAMBLE;
+									walk += buf.len;
+								}
+								break;
+							case IN_PREAMBLE:
+							{
+								int n = c->state_remain;
+								if(buf.len < n) n = buf.len;
+								memcpy(c->temp+c->temp_used,buf.base,n);
+								walk += n;
+								c->state_remain = c->state_remain - n;
+								if(c->state_remain == 0) {
+									if(IS_SINK_PREAMBLE(c->temp)) {
+										GET_SIZE_FROM_PREAMBLE(c->temp,c->log_entry_size);
+										c->temp_used = 0;
+										c->state = IN_LOG_ENTRY;
+									} else {
+										DBG_OUT("PipeClient: Bad state. resetting.\n");
+										c->resetState();
+									}
+								} else
+									break;
+							}
+							case IN_LOG_ENTRY:
+							{
+								if(c->temp_used == 0) { // we aren't using the buffer,
+									if((buf.len - walk) >= GREASE_TOTAL_MSG_SIZE(c->log_entry_size)) { // let's see if we have everything already
+										int r;
+										if((r = c->self->owner->logFromRaw(buf.base,GREASE_TOTAL_MSG_SIZE(c->log_entry_size)))
+												!= GREASE_OK) {
+											ERROR_OUT("Grease logFromRaw failure: %d\n", r);
+										}
+										walk += c->log_entry_size;
+										c->resetState();
+									} else {
+										memcpy(c->temp,buf.base+walk,buf.len-walk);
+										c->temp_used = buf.len;
+										walk += buf.len; // end loop
+									}
+								} else {
+									int need = GREASE_TOTAL_MSG_SIZE(c->log_entry_size) - c->temp_used;
+									if(need <= buf.len-walk) {
+										memcpy(c->temp + c->temp_used,buf.base+walk,need);
+										walk += need;
+										c->temp_used += need;
+										int r;
+										if((r = c->self->owner->logFromRaw(c->temp,GREASE_TOTAL_MSG_SIZE(c->log_entry_size)))
+												!= GREASE_OK) {
+											ERROR_OUT("Grease logFromRaw failure (2): %d\n", r);
+										}
+										c->resetState();
+									} else {
+										memcpy(c->temp + c->temp_used,buf.base+walk,buf.len-walk);
+										walk += buf.len-walk;
+										c->temp_used += buf.len-walk;
+									}
+								}
+								break;
+							}
+						}
+					}
+				}
+			}
+		};
+
+	public:
+		uv_loop_t *loop;
+		GreaseLogger *owner;
+		char *path;
+		SinkId id;
+		uv_pipe_t pipe; // on Unix this is a AF_UNIX/SOCK_STREAM, on Windows its a Named Pipe
+		PipeSink() = delete;
+		PipeSink(GreaseLogger *o, char *_path, SinkId _id, uv_loop_t *l) :
+				buffers(BUFFERS_PER_SINK),
+				loop(l), owner(o), path(NULL), id(_id) {
+			uv_pipe_init(l,&pipe,0);
+			pipe.data = this;
+			if(_path)
+				path = strdup(_path);
+			for (int n=0;n<BUFFERS_PER_SINK;n++) {
+				heapBuf *b = new heapBuf(SINK_BUFFER_SIZE);
+				buffers.add(b);
+			}
+		}
+		void returnBuffer(heapBuf *b) {
+			buffers.add(b);
+		}
+		void bind() {
+			assert(path);
+			uv_pipe_bind(&pipe,path);
+		}
+		//uv_buf_t (*uv_alloc_cb)(uv_handle_t* handle, size_t suggested_size);
+		static uv_buf_t alloc_cb(uv_handle_t* handle, size_t suggested_size) {
+			uv_buf_t buf;
+			heapBuf *b = NULL;
+			PipeClient *client = (PipeClient *) handle->data;
+			if(client->self->buffers.remove(b)) {          // grab an existing buffer
+				buf.base = b->handle.base;
+				buf.len = b->handle.len;
+				b->return_cb = (heapBuf::heapBufManager *) client->self;  // assign class/callback
+			} else {
+				ERROR_OUT("PipeSink: alloc_cb failing. no sink buffers.\n");
+				buf.len = 0;
+				buf.base = NULL;
+			}
+			return buf;
+		}
+		static void on_new_conn(uv_stream_t* server, int status) {
+			PipeSink *sink = (PipeSink *) server->data;
+			if(status == 0 ) {
+				PipeClient *client = new PipeClient(sink);
+				int r;
+				if((r = uv_accept(server, (uv_stream_t *)&client->client))==0) {
+					ERROR_OUT("PipeSink: Failed accept()\n", uv_strerror(uv_last_error(sink->loop)));
+					delete sink;
+				} else {
+					if(uv_read_start((uv_stream_t *)&client->client,PipeSink::alloc_cb, PipeClient::on_read)) {
+
+					}
+				}
+			} else {
+				ERROR_OUT("Sink: on_new_conn: Error on status: %d\n",status);
+			}
+		}
+		void start() {
+			pipe.data = this;
+			uv_listen((uv_stream_t*)&pipe,16,&on_new_conn);
+		}
+
+		void stop() {
+
+		}
+		~PipeSink() {
+			if(path) ::free(path);
+			heapBuf *b;
+			while(buffers.remove(b)) {
+				delete b;
+			}
+		}
+
+	};
+
 
 	struct logBuf {
 		uv_buf_t handle;
@@ -328,18 +575,6 @@ protected:
 		}
 	};
 
-	struct overflowBuf final {
-		uv_buf_t handle;
-		overflowBuf(char *d, int n) {
-			handle.len = n;
-			handle.base = (char *) LMALLOC(n);
-			memcpy(handle.base,d,n);
-		}
-		overflowBuf() = delete;
-		~overflowBuf() {
-			if(handle.base) LFREE(handle.base);
-		}
-	};
 
 	enum nodeCommand {
 		NOOP,
@@ -549,7 +784,7 @@ protected:
 				currentBuffer->copyIn(s,len);
 				uv_mutex_unlock(&writeMutex);
 			} else if(bankSize < len) {
-				overflowBuf *B = new overflowBuf(s,len);
+				heapBuf *B = new heapBuf(s,len);
 				internalCmdReq req(WRITE_TARGET_OVERFLOW,myId);
 				req.aux = B;
 				if(owner->internalCmdQueue.addMvIfRoom(req))
@@ -606,7 +841,7 @@ protected:
 		// called from Logger thread ONLY
 		virtual void flush(logBuf *b) {}; // flush buffer 'n'. This is ansynchronous
 		virtual void flushSync(logBuf *b) {}; // flush buffer 'n'. This is ansynchronous
-		virtual void writeAsync(overflowBuf *b) {};
+		virtual void writeAsync(heapBuf *b) {};
 		virtual void writeSync(char *s, int len) {}; // flush buffer 'n'. This is synchronous. Writes now - skips buffering
 		virtual void close() {};
 		virtual void sync() {};
@@ -634,7 +869,7 @@ protected:
 		}
 		static void write_overflow_cb(uv_write_t* req, int status) {
 			HEAVY_DBG_OUT("overflow_cb");
-			overflowBuf *b = (overflowBuf *) req->data;
+			heapBuf *b = (heapBuf *) req->data;
 			delete b;
 			delete req;
 		}
@@ -665,7 +900,7 @@ protected:
 			uv_mutex_unlock(&b->mutex);
 //			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
 		}
-		void writeAsync(overflowBuf *b) {
+		void writeAsync(heapBuf *b) {
 			uv_write_t *req = new uv_write_t;
 			req->data = b;
 			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, write_overflow_cb);
@@ -801,7 +1036,11 @@ protected:
 					ft->rotate_files();
 					// TODO open new file..
 					int r = uv_fs_open(ft->owner->loggerLoop, &ft->fileFs, ft->myPath, ft->myFlags, ft->myMode, NULL); // use default loop because we need on_open() cb called in event loop of node.js
-					on_open_for_rotate(&ft->fileFs);
+					if(r != -1)
+						on_open_for_rotate(&ft->fileFs);
+					else {
+						ERROR_PERROR("Error opening log file: %s\n", errno, ft->myPath);
+					}
 				}
 			}
 			uv_rwlock_wrunlock(&ft->wrLock);
@@ -815,7 +1054,7 @@ protected:
 			if(req->errorno) {
 				ERROR_PERROR("file: write_overflow_cb() ",req->errorno);
 			}
-			overflowBuf *b = (overflowBuf *) req->data;
+			heapBuf *b = (heapBuf *) req->data;
 			uv_fs_req_cleanup(req);
 			delete b;
 //			delete req;
@@ -866,7 +1105,7 @@ protected:
 			uv_fs_req_cleanup(&req);
 //			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
 		}
-		void writeAsync(overflowBuf *b) {
+		void writeAsync(heapBuf *b) {
 			uv_fs_t *req = new uv_fs_t;
 			req->data = b;
 			// APIUPDATE libuv - will change with newer libuv
@@ -1100,7 +1339,7 @@ protected:
 		}
 		static void write_overflow_cb(uv_write_t* req, int status) {
 			HEAVY_DBG_OUT("overflow_cb");
-			overflowBuf *b = (overflowBuf *) req->data;
+			heapBuf *b = (heapBuf *) req->data;
 			delete b;
 			delete req;
 		}
@@ -1131,7 +1370,7 @@ protected:
 			uv_mutex_unlock(&b->mutex);
 //			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
 		}
-		void writeAsync(overflowBuf *b) {
+		void writeAsync(heapBuf *b) {
 			uv_write_t *req = new uv_write_t;
 			req->data = b;
 			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, write_overflow_cb);
@@ -1191,6 +1430,7 @@ protected:
 	typedef TWlib::TW_KHash_32<uint64_t, FilterList *, TWlib::TW_Mutex, uint64_t_eqstrP, TWlib::Allocator<LoggerAlloc> > FilterHashTable;
 	typedef TWlib::TW_KHash_32<uint32_t, Filter *, TWlib::TW_Mutex, uint32_t_eqstrP, TWlib::Allocator<LoggerAlloc> > FilterTable;
 	typedef TWlib::TW_KHash_32<TargetId, logTarget *, TWlib::TW_Mutex, TargetId_eqstrP, TWlib::Allocator<LoggerAlloc> > TargetTable;
+	typedef TWlib::TW_KHash_32<uint32_t, Sink *, TWlib::TW_Mutex, uint32_t_eqstrP, TWlib::Allocator<LoggerAlloc> > SinkTable;
 
 
 	FilterHashTable filterHashTable;  // look Filters by tag:origin
@@ -1223,6 +1463,7 @@ protected:
 
 	logTarget *defaultTarget;
 	TargetTable targets;
+	SinkTable sinks;
 
 	uv_async_t asyncInternalCommand;
 	uv_async_t asyncExternalCommand;
@@ -1269,16 +1510,16 @@ protected:
 
 	uv_loop_t *loggerLoop;  // grease uses its own libuv event loop (not node's)
 
-	void _log(FilterList *list, logMeta &meta, char *s, int len); // internal log cmd
-	void _logSync(FilterList *list, logMeta &meta, char *s, int len); // internal log cmd
+	int _log(FilterList *list, logMeta &meta, char *s, int len); // internal log cmd
+	int _logSync(FilterList *list, logMeta &meta, char *s, int len); // internal log cmd
 
 
 
 	void start(actionCB cb, target_start_info *data);
+	int logFromRaw(char *base, int len);
 public:
-
-	void log(logMeta &f, char *s, int len); // does the work of logging (for users in C++)
-	void logSync(logMeta &f, char *s, int len); // does the work of logging. now. will empty any buffers first.
+	int log(logMeta &f, char *s, int len); // does the work of logging (for users in C++)
+	int logSync(logMeta &f, char *s, int len); // does the work of logging. now. will empty any buffers first.
 	static void flushAll();
 	static void flushAllSync();
 
@@ -1294,6 +1535,7 @@ public:
     static Handle<Value> AddFilter(const Arguments& args);
     static Handle<Value> RemoveFilter(const Arguments& args);
     static Handle<Value> AddTarget(const Arguments& args);
+    static Handle<Value> AddSink(const Arguments& args);
 
     static Handle<Value> Start(const Arguments& args);
 

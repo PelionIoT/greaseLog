@@ -32,6 +32,7 @@
         "logger.cc",
         "grease.cc",
         "error-common.cc",
+        "grease_client.c",
         "deps/twlib/tw_alloc.cpp",
         "deps/twlib/tw_utils.cpp"
       ],
