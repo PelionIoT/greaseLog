@@ -56,7 +56,7 @@ Persistent<Function> GreaseLogger::constructor;
 //	return ret;
 //}
 
-bool GreaseLogger::sift(logMeta &f, FilterList *&list) { // returns true, then the logger should log it
+bool GreaseLogger::sift(const logMeta &f, FilterList *&list) { // returns true, then the logger should log it
 	bool ret = true;
 
 	if(levelFilterOutMask & f.level)
@@ -172,7 +172,7 @@ void GreaseLogger::mainThread(void *p) {
 
 }
 
-int GreaseLogger::log(logMeta &f, char *s, int len) { // does the work of logging
+int GreaseLogger::log(const logMeta &f, const char *s, int len) { // does the work of logging
 	FilterList *list = NULL;
 	if(sift(f,list)) {
 		return _log(list,f,s,len);
@@ -236,7 +236,7 @@ int GreaseLogger::logFromRaw(char *base, int len) {
 }
 
 
-int GreaseLogger::logSync(logMeta &f, char *s, int len) { // does the work of logging. now. will empty any buffers first.
+int GreaseLogger::logSync(const logMeta &f, const char *s, int len) { // does the work of logging. now. will empty any buffers first.
 	FilterList *list = NULL;
 	if(sift(f,list)) {
 		return _logSync(list,f,s,len);
@@ -560,6 +560,9 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 	HandleScope scope;
 	GreaseLogger *l = GreaseLogger::setupClass();
 	uint32_t target = DEFAULT_TARGET;
+
+//	iterate_plhdr();
+
 	if(args.Length() > 1 && args[0]->IsObject()){
 		Local<Object> jsTarg = args[0]->ToObject();
 		Local<Value> isTty = jsTarg->Get(String::New("tty"));
@@ -744,7 +747,7 @@ Handle<Value> GreaseLogger::Flush(const Arguments& args) {
 
 }
 
-int GreaseLogger::_log(FilterList *list, logMeta &meta, char *s, int len) { // internal log cmd
+int GreaseLogger::_log(FilterList *list, const logMeta &meta, const char *s, int len) { // internal log cmd
 //	HEAVY_DBG_OUT("out len: %d\n",len);
 //	DBG_OUT("meta.level %x",meta.level);
 	if(len > GREASE_MAX_MESSAGE_SIZE)
@@ -769,7 +772,7 @@ int GreaseLogger::_log(FilterList *list, logMeta &meta, char *s, int len) { // i
 	return GREASE_OK;
 }
 
-int GreaseLogger::_logSync(FilterList *list, logMeta &meta, char *s, int len) { // internal log cmd
+int GreaseLogger::_logSync(FilterList *list, const logMeta &meta, const char *s, int len) { // internal log cmd
 	if(len > GREASE_MAX_MESSAGE_SIZE)
 		return GREASE_OVERFLOW;
 	if(!list) {
@@ -903,6 +906,19 @@ Handle<Value> GreaseLogger::NewInstance(const Arguments& args) {
 	return scope.Close(instance);
 }
 
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+int grease_logLocal(const logMeta *f, const char *s, RawLogLen len) {
+	GreaseLogger *l = GreaseLogger::setupClass();
+	return l->log(*f,s,len);
+}
+
+#ifdef __cplusplus
+};
+#endif
 
 
 //

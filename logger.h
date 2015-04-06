@@ -242,7 +242,7 @@ protected:
 			handle.len = n;
 			handle.base = (char *) LMALLOC(n);
 		}
-		heapBuf(char *d, int n) : return_cb(NULL) {
+		heapBuf(const char *d, int n) : return_cb(NULL) {
 			handle.len = n;
 			handle.base = (char *) LMALLOC(n);
 			memcpy(handle.base,d,n);
@@ -550,7 +550,7 @@ protected:
 			if(delim) ::free(delim);
 			if(handle.base) LFREE(handle.base);
 		}
-		void copyIn(char *s, int n) {
+		void copyIn(const char *s, int n) {
 			uv_mutex_lock(&mutex);
 			memcpy((void *) (handle.base + handle.len), s, n);
 			handle.len += n;
@@ -778,7 +778,7 @@ protected:
 			return ret;
 		}
 
-		void write(char *s, int len) {  // called from node thread...
+		void write(const char *s, int len) {  // called from node thread...
 			if(currentBuffer->remain() >= len) {
 				uv_mutex_lock(&writeMutex);
 				currentBuffer->copyIn(s,len);
@@ -842,7 +842,7 @@ protected:
 		virtual void flush(logBuf *b) {}; // flush buffer 'n'. This is ansynchronous
 		virtual void flushSync(logBuf *b) {}; // flush buffer 'n'. This is ansynchronous
 		virtual void writeAsync(heapBuf *b) {};
-		virtual void writeSync(char *s, int len) {}; // flush buffer 'n'. This is synchronous. Writes now - skips buffering
+		virtual void writeSync(const char *s, int len) {}; // flush buffer 'n'. This is synchronous. Writes now - skips buffering
 		virtual void close() {};
 		virtual void sync() {};
 		virtual ~logTarget();
@@ -905,10 +905,10 @@ protected:
 			req->data = b;
 			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, write_overflow_cb);
 		}
-		void writeSync(char *s, int l) {
+		void writeSync(const char *s, int l) {
 			uv_write_t *req = new uv_write_t;
 			uv_buf_t buf;
-			buf.base = s;
+			buf.base = const_cast<char *>(s);
 			buf.len = l;
 			uv_write(req, (uv_stream_t *) &tty, &buf, 1, NULL);
 		}
@@ -1112,10 +1112,10 @@ protected:
 			// uv_fs_write(uv_loop_t* loop, uv_fs_t* req, uv_file file, void* buf, size_t length, int64_t offset, uv_fs_cb cb);
 			uv_fs_write(owner->loggerLoop, req, fileHandle, (void *) b->handle.base, b->handle.len, -1, write_overflow_cb);
 		}
-		void writeSync(char *s, int l) {
+		void writeSync(const char *s, int l) {
 			uv_fs_t req;
 			uv_buf_t buf;
-			buf.base = s;
+			buf.base = const_cast<char *>(s);
 			buf.len = l;
 			uv_fs_write(owner->loggerLoop, &req, fileHandle, (void *) s, l, -1, NULL);
 //			uv_write(req, (uv_stream_t *) &tty, &buf, 1, NULL);
@@ -1436,7 +1436,7 @@ protected:
 	FilterHashTable filterHashTable;  // look Filters by tag:origin
 //	FilterTable filterTable;
 
-	bool sift(logMeta &f, FilterList *&list); // returns true, then the logger should log it	TWlib::TW_KHash_32<uint16_t, int, TWlib::TW_Mutex, uint16_t_eqstrP, TWlib::Allocator<TWlib::Alloc_Std>  > magicNumTable;
+	bool sift(const logMeta &f, FilterList *&list); // returns true, then the logger should log it	TWlib::TW_KHash_32<uint16_t, int, TWlib::TW_Mutex, uint16_t_eqstrP, TWlib::Allocator<TWlib::Alloc_Std>  > magicNumTable;
 	uint32_t levelFilterOutMask;  // mandatory - all log messages have a level. If the bit is 1, the level will be logged.
 
 	bool defaultFilterOut;
@@ -1510,16 +1510,16 @@ protected:
 
 	uv_loop_t *loggerLoop;  // grease uses its own libuv event loop (not node's)
 
-	int _log(FilterList *list, logMeta &meta, char *s, int len); // internal log cmd
-	int _logSync(FilterList *list, logMeta &meta, char *s, int len); // internal log cmd
+	int _log(FilterList *list, const logMeta &meta, const char *s, int len); // internal log cmd
+	int _logSync(FilterList *list, const logMeta &meta, const char *s, int len); // internal log cmd
 
 
 
 	void start(actionCB cb, target_start_info *data);
 	int logFromRaw(char *base, int len);
 public:
-	int log(logMeta &f, char *s, int len); // does the work of logging (for users in C++)
-	int logSync(logMeta &f, char *s, int len); // does the work of logging. now. will empty any buffers first.
+	int log(const logMeta &f, const char *s, int len); // does the work of logging (for users in C++)
+	int logSync(const logMeta &f, const char *s, int len); // does the work of logging. now. will empty any buffers first.
 	static void flushAll();
 	static void flushAllSync();
 
