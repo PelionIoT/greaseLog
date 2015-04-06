@@ -276,24 +276,21 @@ GreaseLogger::logTarget::~logTarget() {
 
 }
 
-GreaseLogger::logTarget::logTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, char *_delim, target_start_info *readydata) :
+GreaseLogger::logTarget::logTarget(int buffer_size, uint32_t id, GreaseLogger *o,
+		targetReadyCB cb, delim_data &_delim, target_start_info *readydata) :
 		readyCB(cb),                  // called when the target is ready or has failed to setup
 		readyData(readydata),
 		logCallbackSet(false),
 		logCallback(),
-		delim(NULL), delimLen(0),
+		delim(std::move(_delim)),
 		availBuffers(NUM_BANKS),
 		writeOutBuffers(NUM_BANKS-1), // there should always be one buffer available for writingTo
 		waitingOnCBBuffers(NUM_BANKS-1),
 		err(), _log_fd(0),
 		currentBuffer(NULL), bankSize(buffer_size), owner(o), myId(id) {
 	uv_mutex_init(&writeMutex);
-	if(_delim) {
-		delim = strdup(_delim);
-		delimLen = strlen(delim);
-	}
 	for (int n=0;n<NUM_BANKS;n++) {
-		_buffers[n] = new logBuf(bankSize,n,delim);
+		_buffers[n] = new logBuf(bankSize,n,delim.duplicate());
 	}
 	for (int n=1;n<NUM_BANKS;n++) {
 		availBuffers.add(_buffers[n]);
@@ -328,9 +325,10 @@ void GreaseLogger::targetReady(bool ready, _errcmn::err_ev &err, logTarget *t) {
 
 void GreaseLogger::setupDefaultTarget(actionCB cb, target_start_info *i) {
 //	if(defaultTarget->_log_fd == GREASE_STDOUT) {
-	char defaultdelim[] = "\n";
+	delim_data defaultdelim;
+	defaultdelim.delim.sprintf("\n");
 	i->cb = cb;
-	new ttyTarget(this->bufferSize, DEFAULT_TARGET, this, targetReady, defaultdelim, i);
+	new ttyTarget(this->bufferSize, DEFAULT_TARGET, this, targetReady,std::move(defaultdelim), i);
 //	} else {
 //		ERROR_OUT("Unsupported default output!");
 //		defaultTarget->_log_fd = GREASE_BAD_FD;
@@ -584,14 +582,21 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 		uv_mutex_unlock(&l->nextIdMutex);
 
 		Local<Value> jsDelim = jsTarg->Get(String::New("delim"));
+		Local<Value> jsDelimOut = jsTarg->Get(String::New("delim_output"));
 		Local<Value> jsCallback = jsTarg->Get(String::New("callback"));
 
-		char *delim = NULL;
+		delim_data delims;
+
 		if(jsDelim->IsString()) {
 			v8::String::Utf8Value v8str(jsDelim);
-			delim = (char *) ::malloc(v8str.length()+1);
-			memset(delim,0,v8str.length()+1);
-			memcpy(delim,v8str.operator *(),v8str.length());
+			delims.delim.malloc(v8str.length());
+			delims.delim.memcpy(v8str.operator *(),v8str.length());
+		}
+
+		if(jsDelimOut->IsString()) {
+			v8::String::Utf8Value v8str(jsDelimOut);
+			delims.delim_output.malloc(v8str.length());
+			delims.delim_output.memcpy(v8str.operator *(),v8str.length());
 		}
 
 		if(isTty->IsString()) {
@@ -603,7 +608,7 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 			i->targId = id;
 			if(args.Length() > 0 && args[1]->IsFunction())
 				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
-			targ = new ttyTarget(buffsize, id, l, targetReady,  delim, i, v8str.operator *());
+			targ = new ttyTarget(buffsize, id, l, targetReady,  std::move(delims), i, v8str.operator *());
 		} else if (isFile->IsString()) {
 			Local<Value> jsMode = jsTarg->Get(String::New("mode"));
 			Local<Value> jsFlags = jsTarg->Get(String::New("flags"));
@@ -650,9 +655,9 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 			HEAVY_DBG_OUT("********* NEW target_start_info: %p\n", i);
 
 			if(opts.enabled)
-				targ = new fileTarget(buffsize, id, l, flags, mode, v8str.operator *(), delim, i, targetReady, opts);
+				targ = new fileTarget(buffsize, id, l, flags, mode, v8str.operator *(), std::move(delims), i, targetReady, opts);
 			else
-				targ = new fileTarget(buffsize, id, l, flags, mode, v8str.operator *(), delim, i, targetReady);
+				targ = new fileTarget(buffsize, id, l, flags, mode, v8str.operator *(), std::move(delims), i, targetReady);
 
 		} else {
 			return ThrowException(Exception::TypeError(String::New("Unknown target type passed into addTarget()")));
@@ -663,7 +668,6 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 			targ->setCallback(f);
 		}
 
-		if(delim) ::free(delim);
 	} else {
 		return ThrowException(Exception::TypeError(String::New("Malformed call to addTarget()")));
 	}

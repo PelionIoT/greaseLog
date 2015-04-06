@@ -171,6 +171,116 @@ public:
 //		start_info() : callback() {}
 //	};
 
+	class heapBuf final {
+	public:
+		class heapBufManager {
+		public:
+			virtual void returnBuffer(heapBuf *b) = 0;
+		};
+		heapBufManager *return_cb;
+		uv_buf_t handle;
+//		uv_buf_t getUvBuf() {
+//			return uv_buf_init(handle.base,handle.len);
+//		}
+		explicit heapBuf(int n) : return_cb(NULL) {
+			handle.len = n;
+			handle.base = (char *) LMALLOC(n);
+		}
+		void sprintf(const char *format, ... ) {
+			char buffer[512];
+			va_list args;
+			va_start (args, format);
+			RawLogLen len = (RawLogLen) vsnprintf (buffer,512,format, args);
+			va_end (args);
+			if(handle.base) LFREE(handle.base);
+			handle.len = len+1;
+			handle.base = (char *) LMALLOC(handle.len);
+			::memset(handle.base,0,(int) handle.len);
+			::memcpy(handle.base,buffer,len);
+		}
+		heapBuf(const char *d, int n) : return_cb(NULL) {
+			handle.len = n;
+			handle.base = (char *) LMALLOC(n);
+			::memcpy(handle.base,d,n);
+		}
+		heapBuf(heapBuf &&o) {
+			handle = o.handle;
+			o.handle.base = NULL;
+			o.handle.len = 0;
+			o.return_cb = o.return_cb; o.return_cb = NULL;
+		}
+		void malloc(int n) {
+			if(handle.base) LFREE(handle.base);
+			handle.len = n;
+			handle.base = (char *) LMALLOC(handle.len);
+		}
+		int memcpy(char *s, int l) {
+			if(handle.base) {
+				if(l > handle.len) l = handle.len;
+				::memcpy(handle.base,s,l);
+				return l;
+			} else
+				return 0;
+		}
+		heapBuf duplicate() {
+			heapBuf ret;
+			if(handle.base) {
+				ret.handle.base = (char *) LMALLOC(handle.len);
+				ret.handle.len = handle.len;
+				::memcpy(ret.handle.base,handle.base,handle.len);
+			}
+			ret.return_cb = return_cb;
+			return ret;
+		}
+		bool empty() {
+			if(handle.base != NULL) return false; else return true;
+		}
+		void returnBuf() {
+			if(return_cb) return_cb->returnBuffer(this);
+		}
+		explicit heapBuf() : return_cb(NULL) { handle.base = NULL; };
+		~heapBuf() {
+			if(handle.base) LFREE(handle.base);
+		}
+		heapBuf& operator=(heapBuf&& o) {
+			handle = o.handle;
+			o.handle.base = NULL;
+			o.handle.len = 0;
+			o.return_cb = o.return_cb; o.return_cb = NULL;
+			return *this;
+		}
+	};
+
+	class delim_data final {
+	public:
+		heapBuf delim;
+		heapBuf delim_output;
+		delim_data() : delim(), delim_output() {}
+		delim_data(delim_data&& o)
+			: delim(std::move(o.delim)),
+			  delim_output(std::move(o.delim_output)) {}
+
+		void setDelim(char *s,int l) {
+			delim.malloc(l);
+			delim.memcpy(s,l);
+		}
+		void setOutputDelim(char *s,int l) {
+			delim_output.malloc(l);
+			delim_output.memcpy(s,l);
+		}
+		delim_data duplicate() {
+			delim_data d;
+			d.delim = delim.duplicate();
+			d.delim_output = delim_output.duplicate();
+			return d;
+		}
+		delim_data& operator=(delim_data&& o) {
+			this->delim = std::move(o.delim);
+			this->delim_output = std::move(o.delim_output);
+			return *this;
+		}
+	};
+
 	class target_start_info final {
 	public:
 		bool needsAsyncQueue; // if the callback must be called in the v8 thread
@@ -227,39 +337,7 @@ protected:
 	TargetId nextTargetId;
 
 
-	class heapBuf final {
-	public:
-		class heapBufManager {
-		public:
-			virtual void returnBuffer(heapBuf *b) = 0;
-		};
-		heapBufManager *return_cb;
-		uv_buf_t handle;
-//		uv_buf_t getUvBuf() {
-//			return uv_buf_init(handle.base,handle.len);
-//		}
-		explicit heapBuf(int n) : return_cb(NULL) {
-			handle.len = n;
-			handle.base = (char *) LMALLOC(n);
-		}
-		heapBuf(const char *d, int n) : return_cb(NULL) {
-			handle.len = n;
-			handle.base = (char *) LMALLOC(n);
-			memcpy(handle.base,d,n);
-		}
-		void malloc(int n) {
-			if(handle.base) LFREE(handle.base);
-			handle.len = n;
-			handle.base = (char *) LMALLOC(handle.len);
-		}
-		void returnBuf() {
-			if(return_cb) return_cb->returnBuffer(this);
-		}
-		explicit heapBuf() : return_cb(NULL) { handle.base = NULL; };
-		~heapBuf() {
-			if(handle.base) LFREE(handle.base);
-		}
-	};
+
 
 	class Filter final {
 	public:
@@ -534,29 +612,24 @@ protected:
 		uv_mutex_t mutex;
 		int id;
 		int space;
-		char *delim;  // delimeter - add to end of each log entry
+		delim_data delim;
 		int delimLen;
-		logBuf(int s, int id, char *_delim=NULL) : id(id), space(s), delim(NULL), delimLen(0) {
+		logBuf(int s, int id, delim_data _delim) : id(id), space(s), delim(std::move(_delim)) {
 			handle.base = (char *) LMALLOC(space);
 			handle.len = 0;
-			if(_delim) {
-				delim = strdup(_delim);
-				delimLen = strlen(delim);
-			}
 			uv_mutex_init(&mutex);
 		}
 		logBuf() = delete;
 		~logBuf() {
-			if(delim) ::free(delim);
 			if(handle.base) LFREE(handle.base);
 		}
 		void copyIn(const char *s, int n) {
 			uv_mutex_lock(&mutex);
 			memcpy((void *) (handle.base + handle.len), s, n);
 			handle.len += n;
-			if(delim) {
-				memcpy((void *) (handle.base + handle.len), delim, delimLen);
-				handle.len += delimLen;
+			if(!delim.delim.empty()) {
+				::memcpy((void *) (handle.base + handle.len), delim.delim.handle.base, delim.delim.handle.len);
+				handle.len += delim.delim.handle.len;
 			}
 			uv_mutex_unlock(&mutex);
 		}
@@ -569,7 +642,7 @@ protected:
 			int ret = 0;
 			uv_mutex_lock(&mutex);
 			ret = space - handle.len;
-			if(delim) ret = ret - delimLen;
+			if(!delim.delim.empty()) ret = ret - delim.delim.handle.len;
 			uv_mutex_unlock(&mutex);
 			return ret;
 		}
@@ -683,7 +756,7 @@ protected:
 		logBuf *_buffers[NUM_BANKS];
 		bool logCallbackSet; // if true, logCallback (below) is set (we prefer to not touch any v8 stuff, when outside the v8 thread)
 		Persistent<Function>  logCallback;
-		char *delim; int delimLen;
+		delim_data delim;
 		// Queue flow:
 		// 1) un-used logBuf taken out of availBuffers, filled with data
 		// 2) placed in writeOutBuffers for write out
@@ -703,7 +776,9 @@ protected:
 		int bankSize;
 		GreaseLogger *owner;
 		uint32_t myId;
-		logTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, char *_delim = NULL, target_start_info *readydata = NULL);
+
+		logTarget(int buffer_size, uint32_t id, GreaseLogger *o,
+				targetReadyCB cb, delim_data &_delim, target_start_info *readydata);
 		logTarget() = delete;
 
 		class writeCBData final {
@@ -912,7 +987,7 @@ protected:
 			buf.len = l;
 			uv_write(req, (uv_stream_t *) &tty, &buf, 1, NULL);
 		}
-		ttyTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, char *_delim = NULL, target_start_info *readydata = NULL,  char *ttypath = NULL)
+		ttyTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, delim_data _delim, target_start_info *readydata = NULL,  char *ttypath = NULL)
 		   : logTarget(buffer_size, id, o, cb, _delim, readydata), ttyFD(0)  {
 //			outReq.cb = write_cb;
 			_errcmn::err_ev err;
@@ -1306,7 +1381,7 @@ protected:
 		}
 
 	public:
-		fileTarget(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, char *_delim, target_start_info *readydata, targetReadyCB cb,
+		fileTarget(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, delim_data _delim, target_start_info *readydata, targetReadyCB cb,
 				rotationOpts rotateopts) :
 				logTarget(buffer_size, id, o, cb, _delim, readydata),
 				submittedWrites(0), rotatedFiles(MAX_ROTATED_FILES,true), current_size(0), all_files_size(0),
@@ -1314,7 +1389,7 @@ protected:
 			post_cstor(buffer_size, id, o, flags, mode, path, readydata, cb);
 		}
 
-		fileTarget(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, char *_delim, target_start_info *readydata, targetReadyCB cb) :
+		fileTarget(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, delim_data _delim, target_start_info *readydata, targetReadyCB cb) :
 			logTarget(buffer_size, id, o, cb, _delim, readydata),
 			submittedWrites(0), rotatedFiles(MAX_ROTATED_FILES,true), current_size(0), all_files_size(0),
 			myPath(NULL), myMode(mode), myFlags(flags), filerotation(), sync_n(0) {
@@ -1382,7 +1457,7 @@ protected:
 			buf.len = l;
 			uv_write(req, (uv_stream_t *) &tty, &buf, 1, NULL);
 		}
-		callbackTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, char *delim = NULL, target_start_info *readydata = NULL,  char *ttypath = NULL)
+		callbackTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, delim_data delim, target_start_info *readydata = NULL,  char *ttypath = NULL)
 		   : logTarget(buffer_size, id, o, cb, delim, readydata), ttyFD(0)  {
 //			outReq.cb = write_cb;
 			_errcmn::err_ev err;
