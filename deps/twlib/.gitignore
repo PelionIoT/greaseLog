@@ -29,3 +29,5 @@ test_rbtree
 /.csettings/
 /test_twcircular_unblockall
 /test_twcircular_array_transfer
+/.project
+*.cproject
