@@ -19,7 +19,7 @@ var testCallback = function(str,id) {
 logger.addTarget({
 	    file: "testlog.log",
 	    callback: testCallback,
-	    delim: 'ϐ', // separate each entry with a hard return
+	    delim: 'ϐ', // separate each entry with a special char
 	    rotate: {
 	    	max_files: 5,
 	    	max_file_size:  10000,
@@ -51,11 +51,52 @@ logger.addTarget({
 			console.log("added filter: " + ret);
 		}
 
-		console.time('logit');
+		setTimeout(function(){},2000); 
+		// stall long enough for the logger to setup the second target 
+		// this isn't a hack - it just shows that grease won't hang the node.js event loop
+		// when setting up a target.
+
+		logger.addTarget({
+			    file: "testlog2.log",
+			    delim: 'ϐ', // separate each entry with a hard return
+			    rotate: {
+			    	max_files: 5,
+			    	max_file_size:  10000,
+			    	max_total_size: 100000
+		//	    	,rotate_on_start: true
+			    }
+			},function(tid2,err){
+
+				if(err) {
+					console.log("error: "+ util.inspect(err));
+				} else {
+					console.log("added target: " + tid2);
+					var ret = logger.addFilter({ 
+						target: tid2,
+						mask: logger.LEVELS.error
+					});
+					console.log("added filter: " + ret);
+					var ret = logger.addFilter({ 
+						target: tid2,
+						mask: logger.LEVELS.debug,
+						tag: 'Eds'
+					});
+					console.log("added filter: " + ret);
+					var ret = logger.addFilter({ 
+						target: tid2,
+						mask: logger.LEVELS.debug,
+						tag: 'Eds',
+						origin: 'special.js'
+					});
+					console.log("added targets / filter (2): " + ret);
+
+
+///////////
+							console.time('logit');
 		logger.error("************ FIRST **********");
 		for(var n=0;n<1000;n++) {
-			logger.debug("....DEBUG....");
-			logger.debug('Eds', "....DEBUG....");			
+				logger.debug("....DEBUG(1)....");
+			logger.debug('Eds', "....DEBUG(2)....");			
 			logger.error("....ERROR....");
 			logger.log(" log log log");
 
@@ -66,6 +107,14 @@ logger.addTarget({
 		}
 		logger.error("************ LAST **********");
 		console.timeEnd('logit');
+/////////////////
+			
+
+
+				}
+			});
+
+
 	});
 
 // var testCallback = function(str,id) {
