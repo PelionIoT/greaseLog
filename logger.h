@@ -778,7 +778,7 @@ protected:
 		uint32_t myId;
 
 		logTarget(int buffer_size, uint32_t id, GreaseLogger *o,
-				targetReadyCB cb, delim_data &_delim, target_start_info *readydata);
+				targetReadyCB cb, delim_data _delim, target_start_info *readydata);
 		logTarget() = delete;
 
 		class writeCBData final {
@@ -800,13 +800,16 @@ protected:
 			availBuffers.add(b);
 		}
 
-		void returnBuffer(logBuf *b) {
+		void returnBuffer(logBuf *b, bool sync = false) {
 			if(logCallbackSet && b->handle.len > 0) {
 				writeCBData cbdat(this,b);
 				if(!owner->v8LogCallbacks.addMvIfRoom(cbdat)) {
 					ERROR_OUT(" !!! v8LogCallbacks is full! Can't rotate. Callback will be skipped.");
 				}
-				uv_async_send(&owner->asyncV8LogCallback);
+				if(!sync)
+					uv_async_send(&owner->asyncV8LogCallback);
+				else
+					GreaseLogger::_doV8Callback(cbdat);
 			} else {
 				b->clear();
 				availBuffers.add(b);
@@ -988,7 +991,7 @@ protected:
 			uv_write(req, (uv_stream_t *) &tty, &buf, 1, NULL);
 		}
 		ttyTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, delim_data _delim, target_start_info *readydata = NULL,  char *ttypath = NULL)
-		   : logTarget(buffer_size, id, o, cb, _delim, readydata), ttyFD(0)  {
+		   : logTarget(buffer_size, id, o, cb, std::move(_delim), readydata), ttyFD(0)  {
 //			outReq.cb = write_cb;
 			_errcmn::err_ev err;
 			if(ttypath)
@@ -1383,14 +1386,14 @@ protected:
 	public:
 		fileTarget(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, delim_data _delim, target_start_info *readydata, targetReadyCB cb,
 				rotationOpts rotateopts) :
-				logTarget(buffer_size, id, o, cb, _delim, readydata),
+				logTarget(buffer_size, id, o, cb, std::move(_delim), readydata),
 				submittedWrites(0), rotatedFiles(MAX_ROTATED_FILES,true), current_size(0), all_files_size(0),
 				myPath(NULL), myMode(mode), myFlags(flags), filerotation(rotateopts), sync_n(0) {
 			post_cstor(buffer_size, id, o, flags, mode, path, readydata, cb);
 		}
 
 		fileTarget(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, delim_data _delim, target_start_info *readydata, targetReadyCB cb) :
-			logTarget(buffer_size, id, o, cb, _delim, readydata),
+			logTarget(buffer_size, id, o, cb, std::move(_delim), readydata),
 			submittedWrites(0), rotatedFiles(MAX_ROTATED_FILES,true), current_size(0), all_files_size(0),
 			myPath(NULL), myMode(mode), myFlags(flags), filerotation(), sync_n(0) {
 			post_cstor(buffer_size, id, o, flags, mode, path, readydata, cb);
@@ -1403,92 +1406,26 @@ protected:
 
 	class callbackTarget final : public logTarget {
 	public:
-		int ttyFD;
-		uv_tty_t tty;
-		static void write_cb(uv_write_t* req, int status) {
-//			HEAVY_DBG_OUT("write_cb");
-			writeCBData *d = (writeCBData *) req->data;
-			d->t->returnBuffer(d->b);
+		callbackTarget(int buffer_size, uint32_t id, GreaseLogger *o,
+				targetReadyCB cb, delim_data _delim, target_start_info *readydata) :
+					logTarget(buffer_size, id, o, cb, std::move(_delim), readydata) {}
+		callbackTarget() = delete;
 
-			delete req;
-		}
-		static void write_overflow_cb(uv_write_t* req, int status) {
-			HEAVY_DBG_OUT("overflow_cb");
-			heapBuf *b = (heapBuf *) req->data;
-			delete b;
-			delete req;
-		}
+		// 			d->t->returnBuffer(d->b);
 
-
-		uv_write_t outReq;  // since this function is no re-entrant (below) we can do this
-		void flush(logBuf *b) { // this will always be called by the logger thread (via uv_async_send)
-			uv_write_t *req = new uv_write_t;
-			writeCBData *d = new writeCBData;
-			d->t = this;
-			d->b = b;
-			req->data = d;
-			uv_mutex_lock(&b->mutex);  // this lock should be ok, b/c write is async
-			HEAVY_DBG_OUT("TTY: flush() %d bytes", b->handle.len);
-			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, write_cb);
-			uv_mutex_unlock(&b->mutex);
-//			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
-		}
-		void flushSync(logBuf *b) { // this will always be called by the logger thread (via uv_async_send)
-			uv_write_t *req = new uv_write_t;
-			writeCBData *d = new writeCBData;
-			d->t = this;
-			d->b = b;
-			req->data = d;
-			uv_mutex_lock(&b->mutex);  // this lock should be ok, b/c write is async
-			HEAVY_DBG_OUT("TTY: flushSync() %d bytes", b->handle.len);
-			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, NULL);
-			uv_mutex_unlock(&b->mutex);
-//			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
-		}
+		void flush(logBuf *b) {
+			returnBuffer(b);
+		}; // flush buffer 'n'. This is ansynchronous
+		void flushSync(logBuf *b) {
+			returnBuffer(b,true);
+		}; // flush buffer 'n'. This is ansynchronous
 		void writeAsync(heapBuf *b) {
-			uv_write_t *req = new uv_write_t;
-			req->data = b;
-			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, write_overflow_cb);
-		}
-		void writeSync(char *s, int l) {
-			uv_write_t *req = new uv_write_t;
-			uv_buf_t buf;
-			buf.base = s;
-			buf.len = l;
-			uv_write(req, (uv_stream_t *) &tty, &buf, 1, NULL);
-		}
-		callbackTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, delim_data delim, target_start_info *readydata = NULL,  char *ttypath = NULL)
-		   : logTarget(buffer_size, id, o, cb, delim, readydata), ttyFD(0)  {
-//			outReq.cb = write_cb;
-			_errcmn::err_ev err;
-			if(ttypath)
-				ttyFD = ::open(ttypath, O_WRONLY, 0);
-			else
-				ttyFD = ::open("/dev/tty", O_WRONLY, 0);
+			// sechdule v8 callback now
+		};
+		void writeSync(const char *s, int len) {
+			// call v8 callback now
+		}; // flush buffer 'n'. This is synchronous. Writes now - skips buffering
 
-			if(ttyFD >= 0) {
-				tty.loop = o->loggerLoop;
-				int r = uv_tty_init(o->loggerLoop, &tty, ttyFD, READABLE);
-
-				if (r) ERROR_UV("initing tty", r, o->loggerLoop);
-
-				// enable TYY formatting, flow-control, etc.
-//				r = uv_tty_set_mode(&tty, TTY_NORMAL);
-//				DBG_OUT("r = %d\n",r);
-//				if (r) ERROR_UV("setting tty mode", r, o->loggerLoop);
-
-				if(!r)
-					readyCB(true,err,this);
-				else {
-					err.setError(r);
-					readyCB(false,err, this);
-				}
-			} else {
-				err.setError(errno,"Failed to open TTY");
-				readyCB(false,err, this);
-			}
-
-		}
 	};
 
 
@@ -1640,6 +1577,7 @@ protected:
 	// calls callbacks when target starts (if target was started in non-v8 thread
 	static void callTargetCallback(uv_async_t *h, int status );
 	static void callV8LogCallbacks(uv_async_t *h, int status );
+	static void _doV8Callback(GreaseLogger::logTarget::writeCBData &data); // <--- only call this one from v8 thread!
 	static void start_target_cb(GreaseLogger *l, _errcmn::err_ev &err, void *d);
 	static void start_logger_cb(GreaseLogger *l, _errcmn::err_ev &err, void *d);
 

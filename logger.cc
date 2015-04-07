@@ -277,7 +277,7 @@ GreaseLogger::logTarget::~logTarget() {
 }
 
 GreaseLogger::logTarget::logTarget(int buffer_size, uint32_t id, GreaseLogger *o,
-		targetReadyCB cb, delim_data &_delim, target_start_info *readydata) :
+		targetReadyCB cb, delim_data _delim, target_start_info *readydata) :
 		readyCB(cb),                  // called when the target is ready or has failed to setup
 		readyData(readydata),
 		logCallbackSet(false),
@@ -416,14 +416,18 @@ void GreaseLogger::callV8LogCallbacks(uv_async_t *h, int status ) {
 	GreaseLogger::logTarget::writeCBData data;
 	while(l->v8LogCallbacks.removeMv(data)) {
 		if(!data.t->logCallback.IsEmpty()) {
-			const unsigned argc = 2;
-			Local<Value> argv[argc];
-			argv[0] = String::New( data.b->handle.base, (int) data.b->handle.len );
-			argv[1] = Integer::NewFromUnsigned( data.t->myId );
-			data.t->logCallback->Call(Context::GetCurrent()->Global(),1,argv);
-			data.t->finalizeV8Callback(data.b);
+			_doV8Callback(data);
 		}
 	}
+}
+
+void GreaseLogger::_doV8Callback(GreaseLogger::logTarget::writeCBData &data) {
+	const unsigned argc = 2;
+	Local<Value> argv[argc];
+	argv[0] = String::New( data.b->handle.base, (int) data.b->handle.len );
+	argv[1] = Integer::NewFromUnsigned( data.t->myId );
+	data.t->logCallback->Call(Context::GetCurrent()->Global(),1,argv);
+	data.t->finalizeV8Callback(data.b);
 }
 
 void GreaseLogger::callTargetCallback(uv_async_t *h, int status ) {
@@ -659,11 +663,23 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 			else
 				targ = new fileTarget(buffsize, id, l, flags, mode, v8str.operator *(), std::move(delims), i, targetReady);
 
+		} else if(jsCallback->IsFunction()) { // if not those, bu callback is set, then just make a 'do nothing' target - but the callback will get used
+			target_start_info *i = new target_start_info();
+//			i->system_start_info = data;
+			i->cb = start_target_cb;
+			i->targId = id;
+			if(args.Length() > 0 && args[1]->IsFunction())
+				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
+//			int buffer_size, uint32_t id, GreaseLogger *o,
+//							targetReadyCB cb, delim_data &_delim, target_start_info *readydata
+			targ = new callbackTarget(buffsize, id, l, targetReady, std::move(delims), i);
+			_errcmn::err_ev err;
+			targ->readyCB(true,err,targ);
 		} else {
 			return ThrowException(Exception::TypeError(String::New("Unknown target type passed into addTarget()")));
 		}
 
-		if(jsCallback->IsFunction()) {
+		if(jsCallback->IsFunction() && targ) {
 			Local<Function> f = Local<Function>::Cast(jsCallback);
 			targ->setCallback(f);
 		}

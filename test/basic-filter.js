@@ -12,13 +12,15 @@ console.dir(logger);
 var N = 0;
 
 var testCallback = function(str,id) {
-
-	console.log("CB (" + id + ")>" + str + "<");
+	var entries = str.split("ϐ");
+	for(var n=0;n<entries.length;n++)
+		console.log("CB (" + id + ")>" + entries[n] + "<");
 }
 
 logger.addTarget({
-	    file: "testlog.log",
+//	    file: "testlog.log",
 	    callback: testCallback,
+
 	    delim: 'ϐ', // separate each entry with a special char
 	    rotate: {
 	    	max_files: 5,
@@ -58,7 +60,7 @@ logger.addTarget({
 
 		logger.addTarget({
 			    file: "testlog2.log",
-			    delim: 'ϐ', // separate each entry with a hard return
+			    delim: '\n', // separate each entry with a hard return
 			    rotate: {
 			    	max_files: 5,
 			    	max_file_size:  10000,
