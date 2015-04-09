@@ -1581,14 +1581,11 @@ protected:
 
 	};
 
-
 	static void targetReady(bool ready, _errcmn::err_ev &err, logTarget *t);
 
 	TWlib::tw_safeCircular<GreaseLogger::internalCmdReq, LoggerAlloc > internalCmdQueue;
 	TWlib::tw_safeCircular<GreaseLogger::nodeCmdReq, LoggerAlloc > nodeCmdQueue;
 	TWlib::tw_safeCircular<GreaseLogger::logTarget::writeCBData, LoggerAlloc > v8LogCallbacks;
-
-
 
 
 	uv_mutex_t modifyFilters; // if the table is being modifued, lock first
@@ -1602,21 +1599,12 @@ protected:
 
 
 	FilterHashTable filterHashTable;  // look Filters by tag:origin
-//	FilterTable filterTable;
 
 	bool sift(const logMeta &f, FilterList *&list); // returns true, then the logger should log it	TWlib::TW_KHash_32<uint16_t, int, TWlib::TW_Mutex, uint16_t_eqstrP, TWlib::Allocator<TWlib::Alloc_Std>  > magicNumTable;
 	uint32_t levelFilterOutMask;  // mandatory - all log messages have a level. If the bit is 1, the level will be logged.
 
 	bool defaultFilterOut;
-//	FilterTable tagFilterOut;
-//	FilterTable originFilterOut;
 
-
-
-
-//	bool showNoLevel;    // show if no filter entry? default...
-//	bool showNoTag;      // ''
-//	bool showNoOrigin;   // ''
 
 	// http://stackoverflow.com/questions/1277627/overhead-of-pthread-mutexes
 	uv_mutex_t modifyTargets; // if the table is being modified, lock first

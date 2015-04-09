@@ -480,7 +480,8 @@ Handle<Value> GreaseLogger::AddLevelLabel(const Arguments& args) {
 	if(args.Length() > 1 && args[0]->IsUint32() && args[1]->IsString()) {
 		v8::String::Utf8Value v8str(args[1]->ToString());
 		logLabel *label = logLabel::fromUTF8(v8str.operator *(),v8str.length());
-		l->levelLabels.addReplace(args[0]->Uint32Value(),label);
+		uint32_t v = args[0]->Uint32Value();
+		l->levelLabels.addReplace(v,label);
 	} else {
 		return ThrowException(Exception::TypeError(String::New("addLevelLabel: bad parameters")));
 	}

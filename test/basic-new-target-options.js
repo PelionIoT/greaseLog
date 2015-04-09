@@ -46,11 +46,14 @@ var N = 0;
 // 		logger.error("************ LAST **********");
 // 	});
 
+
+
 logger.addTarget({
 	    file: "rotateThis.log",
 	    delim: "\n",
 	    format: {
-	    	time: "[%ld:%d] "
+	    	time: "[%ld:%d] ",
+	    	level: "<%s> "
 	    },
 	    rotate: {
 	    	max_files: 5,

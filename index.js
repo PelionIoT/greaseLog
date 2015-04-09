@@ -127,9 +127,9 @@ var setup = function(levels) {
 			}
 
 			for(var n=0;n<levelsK.length;n++) {
-
 				var N = levels[levelsK[n]];
 				var name = levelsK[n];
+				instance.addLevelLabel(N,name);  // place label into native binding
 				console.log("adding " + name);
 				createfunc(name,N);
 			}
@@ -158,6 +158,7 @@ var setup = function(levels) {
 
 
 	this.addTarget = function(obj,cb) {
+		// TODO need to validate format strings so that they don't do unsafe things in native code
 		return instance.addTarget(obj,cb);
 	}
 
