@@ -19,8 +19,8 @@
 extern "C" {
 #endif
 
-#define GREASE_MAX_MESSAGE_SIZE 65535
-
+#define GREASE_MAX_MESSAGE_SIZE 65535  // we don't support a log entry larger than this
+#define GREASE_MAX_PREFIX_HEADER 128   // this is maximum amount of chares which will prefix a log entry
 #define SINK_LOG_PREAMBLE ((uint32_t)0xF00DFEED)
 #define SIZEOF_SINK_LOG_PREAMBLE (sizeof(uint32_t))
 #define IS_SINK_PREAMBLE(p) (memcmp(p,&__grease_preamble,SIZEOF_SINK_LOG_PREAMBLE) == 0)

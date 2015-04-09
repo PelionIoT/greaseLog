@@ -24,8 +24,6 @@ using namespace Grease;
 
 Persistent<Function> GreaseLogger::constructor;
 
-
-
 bool GreaseLogger::sift(const logMeta &f, FilterList *&list) { // returns true, then the logger should log it
 	bool ret = true;
 
@@ -43,7 +41,6 @@ bool GreaseLogger::sift(const logMeta &f, FilterList *&list) { // returns true, 
 	uv_mutex_unlock(&modifyFilters);
 	return ret;
 }
-
 
 GreaseLogger *GreaseLogger::LOGGER = NULL;
 
@@ -69,7 +66,7 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
 			{
 				DBG_OUT("WRITE_TARGET_OVERFLOW");
 				t->flushAll();
-				heapBuf *big = (heapBuf *) req.aux;
+				singleLog *big = (singleLog *) req.aux;
 				t->writeAsync(big);
 //				delete big; // handled by callback
 
@@ -421,6 +418,76 @@ void GreaseLogger::callTargetCallback(uv_async_t *h, int status ) {
 	}
 }
 
+
+
+
+/**
+ * addTagLabel(id,label)
+ * @param args id is a number, label a string
+ *
+ * @return v8::Undefined
+ */
+Handle<Value> GreaseLogger::AddTagLabel(const Arguments& args) {
+	HandleScope scope;
+
+	GreaseLogger *l = GreaseLogger::setupClass();
+
+	if(args.Length() > 1 && args[0]->IsUint32() && args[1]->IsString()) {
+		v8::String::Utf8Value v8str(args[1]->ToString());
+		logLabel *label = logLabel::fromUTF8(v8str.operator *(),v8str.length());
+		l->tagLabels.addReplace(args[0]->Uint32Value(),label);
+	} else {
+		return ThrowException(Exception::TypeError(String::New("addTagLabel: bad parameters")));
+	}
+
+	return scope.Close(Undefined());
+};
+
+/**
+ * addOriginLabel(id,label)
+ * @param args id is a number, label a string
+ *
+ * @return v8::Undefined
+ */
+Handle<Value> GreaseLogger::AddOriginLabel(const Arguments& args) {
+	HandleScope scope;
+
+	GreaseLogger *l = GreaseLogger::setupClass();
+
+	if(args.Length() > 1 && args[0]->IsUint32() && args[1]->IsString()) {
+		v8::String::Utf8Value v8str(args[1]->ToString());
+		logLabel *label = logLabel::fromUTF8(v8str.operator *(),v8str.length());
+		l->originLabels.addReplace(args[0]->Uint32Value(),label);
+	} else {
+		return ThrowException(Exception::TypeError(String::New("addOriginLabel: bad parameters")));
+	}
+
+	return scope.Close(Undefined());
+};
+
+
+/**
+ * addOriginLabel(id,label)
+ * @param args id is a number, label a string
+ *
+ * @return v8::Undefined
+ */
+Handle<Value> GreaseLogger::AddLevelLabel(const Arguments& args) {
+	HandleScope scope;
+
+	GreaseLogger *l = GreaseLogger::setupClass();
+
+	if(args.Length() > 1 && args[0]->IsUint32() && args[1]->IsString()) {
+		v8::String::Utf8Value v8str(args[1]->ToString());
+		logLabel *label = logLabel::fromUTF8(v8str.operator *(),v8str.length());
+		l->levelLabels.addReplace(args[0]->Uint32Value(),label);
+	} else {
+		return ThrowException(Exception::TypeError(String::New("addLevelLabel: bad parameters")));
+	}
+
+	return scope.Close(Undefined());
+};
+
 /**
  * addFilter(obj) where
  * obj = {
@@ -513,6 +580,11 @@ Handle<Value> GreaseLogger::AddSink(const Arguments& args) {
  * obj = {
  *    file: "/path",
  *    append: true,   // default
+ *    delim: "\n",    // optional. The delimitter between log entries. Any UTF8 string is fine
+ *    format: {
+ *       time: "[%ld]",
+ *       level: "<%s>"
+ *    }
  *    rotate: {
  *       max_files: 5,
  *       max_file_size:  100000,  // 100k
@@ -558,7 +630,7 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 		Local<Value> jsDelim = jsTarg->Get(String::New("delim"));
 		Local<Value> jsDelimOut = jsTarg->Get(String::New("delim_output"));
 		Local<Value> jsCallback = jsTarg->Get(String::New("callback"));
-
+		Local<Value> jsFormat = jsTarg->Get(String::New("format"));
 		delim_data delims;
 
 		if(jsDelim->IsString()) {
@@ -654,6 +726,30 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 			targ->setCallback(f);
 		}
 
+		if(jsFormat->IsObject()) {
+			Local<Object> jsObj = jsFormat->ToObject();
+			Local<Value> jsKey = jsObj->Get(String::New("time"));
+			if(jsKey->IsString()) {
+				v8::String::Utf8Value v8str(jsKey);
+				targ->setTimeFormat(v8str.operator *(),v8str.length());
+			}
+			jsKey = jsObj->Get(String::New("level"));
+			if(jsKey->IsString()) {
+				v8::String::Utf8Value v8str(jsKey);
+				targ->setLevelFormat(v8str.operator *(),v8str.length());
+			}
+			jsKey = jsObj->Get(String::New("tag"));
+			if(jsKey->IsString()) {
+				v8::String::Utf8Value v8str(jsKey);
+				targ->setTagFormat(v8str.operator *(),v8str.length());
+			}
+			jsKey = jsObj->Get(String::New("origin"));
+			if(jsKey->IsString()) {
+				v8::String::Utf8Value v8str(jsKey);
+				targ->setOriginFormat(v8str.operator *(),v8str.length());
+			}
+		}
+
 	} else {
 		return ThrowException(Exception::TypeError(String::New("Malformed call to addTarget()")));
 	}
@@ -743,13 +839,13 @@ int GreaseLogger::_log(FilterList *list, const logMeta &meta, const char *s, int
 	if(len > GREASE_MAX_MESSAGE_SIZE)
 		return GREASE_OVERFLOW;
 	if(!list) {
-		defaultTarget->write(s,len);
+		defaultTarget->write(s,len,meta);
 	} else if (list->valid(meta.level)) {
 		int n = 0;
 		while(list->list[n].id != 0) {
 			logTarget *t = NULL;
 			if((list->list[n].levelMask & meta.level) && targets.find(list->list[n].targetId, t)) {
-				t->write(s,len);
+				t->write(s,len,meta);
 			} else {
 				ERROR_OUT("Orphaned target id: %d\n",list->list[n].targetId);
 			}
@@ -757,7 +853,7 @@ int GreaseLogger::_log(FilterList *list, const logMeta &meta, const char *s, int
 		}
 	} else {  // write out to default target if the list does not apply to this level
 //		HEAVY_DBG_OUT("pass thru to default");
-		defaultTarget->write(s,len);
+		defaultTarget->write(s,len,meta);
 	}
 	return GREASE_OK;
 }
@@ -766,13 +862,13 @@ int GreaseLogger::_logSync(FilterList *list, const logMeta &meta, const char *s,
 	if(len > GREASE_MAX_MESSAGE_SIZE)
 		return GREASE_OVERFLOW;
 	if(!list) {
-		defaultTarget->writeSync(s,len);
+		defaultTarget->writeSync(s,len,meta);
 	} else {
 		int n = 0;
 		while(list->list[n].id != 0) {
 			logTarget *t = NULL;
 			if(targets.find(list->list[n].targetId, t)) {
-				t->writeSync(s,len);
+				t->writeSync(s,len,meta);
 			} else {
 				ERROR_OUT("Orphaned target id: %d\n",list->list[n].targetId);
 			}
@@ -805,6 +901,11 @@ void GreaseLogger::Init() {
 	tpl->InstanceTemplate()->Set(String::NewSymbol("flush"), FunctionTemplate::New(Flush)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("logSync"), FunctionTemplate::New(LogSync)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("log"), FunctionTemplate::New(Log)->GetFunction());
+
+	tpl->InstanceTemplate()->Set(String::NewSymbol("addTagLabel"), FunctionTemplate::New(AddTagLabel)->GetFunction());
+	tpl->InstanceTemplate()->Set(String::NewSymbol("addOriginLabel"), FunctionTemplate::New(AddOriginLabel)->GetFunction());
+	tpl->InstanceTemplate()->Set(String::NewSymbol("addLevelLabel"), FunctionTemplate::New(AddLevelLabel)->GetFunction());
+
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addFilter"), FunctionTemplate::New(AddFilter)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("removeFilter"), FunctionTemplate::New(RemoveFilter)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addTarget"), FunctionTemplate::New(AddTarget)->GetFunction());

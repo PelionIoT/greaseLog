@@ -30,6 +30,10 @@ using namespace v8;
 #include <stdlib.h>
 #include <stdio.h>
 #include <uv.h>
+#include <time.h>
+// Linux thing:
+#include <sys/timeb.h>
+
 
 #include <TW/tw_alloc.h>
 #include <TW/tw_fifo.h>
@@ -214,9 +218,9 @@ public:
 			handle.len = n;
 			handle.base = (char *) LMALLOC(handle.len);
 		}
-		int memcpy(char *s, int l) {
+		int memcpy(const char *s, size_t l) {
 			if(handle.base) {
-				if(l > handle.len) l = handle.len;
+				if(l > handle.len) l = (int) handle.len;
 				::memcpy(handle.base,s,l);
 				return l;
 			} else
@@ -238,7 +242,7 @@ public:
 		void returnBuf() {
 			if(return_cb) return_cb->returnBuffer(this);
 		}
-		explicit heapBuf() : return_cb(NULL) { handle.base = NULL; };
+		explicit heapBuf() : return_cb(NULL) { handle.base = NULL; handle.len = 0; };
 		~heapBuf() {
 			if(handle.base) LFREE(handle.base);
 		}
@@ -248,6 +252,49 @@ public:
 			o.handle.len = 0;
 			o.return_cb = o.return_cb; o.return_cb = NULL;
 			return *this;
+		}
+	};
+
+	class singleLog {
+	public:
+		logMeta m;
+		heapBuf buf;
+		singleLog(const char *d, int l, const logMeta &_m) : m(_m), buf(d,l) {}
+	};
+
+	class logLabel final {
+	public:
+		heapBuf buf;
+		logLabel(const char *s, const char *format = nullptr) : buf() {
+			if(format != nullptr)
+				buf.sprintf(format,s);
+			else
+				buf.sprintf("%s",s);
+		}
+		size_t length() {
+			return buf.handle.len;
+		}
+		logLabel() : buf() {}
+
+		void setUTF8(const char *s, int len) {
+			buf.malloc(len+1);
+			memset(buf.handle.base,0,(size_t) len+1);
+			buf.memcpy(s,(size_t) len);
+		}
+		/**
+		 * Creates a log label from a utf8 string with specific len. The normal cstor
+		 * can be used to do this also, but this ensures the entire string is encoded (if there are bugs
+		 * with your sprintf, etc for UTF8)
+		 * @param s
+		 * @param len
+		 * @return
+		 */
+		static logLabel *fromUTF8(const char *s, int len) {
+			logLabel *l = new logLabel();
+			l->buf.malloc((size_t) len+1);
+			memset(l->buf.handle.base,0,(size_t) len+1);
+			l->buf.memcpy(s,len);
+			return l;
 		}
 	};
 
@@ -623,15 +670,17 @@ protected:
 		~logBuf() {
 			if(handle.base) LFREE(handle.base);
 		}
-		void copyIn(const char *s, int n) {
-			uv_mutex_lock(&mutex);
-			memcpy((void *) (handle.base + handle.len), s, n);
-			handle.len += n;
-			if(!delim.delim.empty()) {
-				::memcpy((void *) (handle.base + handle.len), delim.delim.handle.base, delim.delim.handle.len);
-				handle.len += delim.delim.handle.len;
+		void copyIn(const char *s, int n, bool use_delim = true) {
+			if(n > 0) {
+				uv_mutex_lock(&mutex);
+				memcpy((void *) (handle.base + handle.len), s, n);
+				handle.len += n;
+				if(!delim.delim.empty() && use_delim) {
+					::memcpy((void *) (handle.base + handle.len), delim.delim.handle.base, delim.delim.handle.len);
+					handle.len += delim.delim.handle.len;
+				}
+				uv_mutex_unlock(&mutex);
 			}
-			uv_mutex_unlock(&mutex);
 		}
 		void clear() {
 			uv_mutex_lock(&mutex);
@@ -781,6 +830,60 @@ protected:
 				targetReadyCB cb, delim_data _delim, target_start_info *readydata);
 		logTarget() = delete;
 
+		logLabel timeFormat;
+		logLabel tagFormat;
+		logLabel originFormat;
+		logLabel levelFormat;
+
+		void setTimeFormat(const char *s, int len) {
+			timeFormat.setUTF8(s,len);
+		}
+		void setTagFormat(const char *s, int len) {
+			tagFormat.setUTF8(s,len);
+		}
+		void setOriginFormat(const char *s, int len) {
+			originFormat.setUTF8(s,len);
+		}
+		void setLevelFormat(const char *s, int len) {
+			levelFormat.setUTF8(s,len);
+		}
+
+		size_t putsHeader(char *mem, size_t remain, const logMeta &m) {
+			static __thread struct timeb _timeb;
+			size_t space = remain;
+			logLabel *label;
+			int n = 0;
+			if(timeFormat.length() > 0 && space > 0) {
+//				time_t curr = time(NULL);
+				ftime(&_timeb);
+				n = snprintf(mem,space,timeFormat.buf.handle.base,_timeb.time,_timeb.millitm);
+				space = space - n;
+			}
+			if(levelFormat.length() > 0 && space > 0) {
+				if(owner->levelLabels.find(m.level,label) && label->length() > 0) {
+					n = snprintf(mem + (remain-space),space,levelFormat.buf.handle.base,label->buf.handle.base);
+					space = space - n;
+				}
+			}
+			if(m.tag > 0 && tagFormat.length() > 0 && space > 0) {
+				if(owner->tagLabels.find(m.tag,label) && label->length() > 0) {
+					n = snprintf(mem + (remain-space),space,tagFormat.buf.handle.base,label->buf.handle.base);
+					space = space - n;
+				}
+			}
+			if(m.origin > 0 && originFormat.length() > 0 && space > 0) {
+				if(owner->originLabels.find(m.origin,label) && label->length() > 0) {
+					n = snprintf(mem+(remain-space),space,originFormat.buf.handle.base,label->buf.handle.base);
+					space = space - n;
+				}
+			}
+
+			// returns the amount of space used.
+			return remain-space;
+		}
+
+
+
 		class writeCBData final {
 		public:
 			logTarget *t;
@@ -856,13 +959,16 @@ protected:
 			return ret;
 		}
 
-		void write(const char *s, int len) {  // called from node thread...
-			if(currentBuffer->remain() >= len) {
-				uv_mutex_lock(&writeMutex);
-				currentBuffer->copyIn(s,len);
-				uv_mutex_unlock(&writeMutex);
-			} else if(bankSize < len) {
-				heapBuf *B = new heapBuf(s,len);
+		void write(const char *s, int len, const logMeta &m) {  // called from node thread...
+			static __thread char header_buffer[GREASE_MAX_PREFIX_HEADER]; // used to make header of log line. for speed it's static. this is __thread
+			                                                              // so when it is called from multiple threads buffers don't conflict
+			                                                              // for a discussion of thread_local (a C++ 11 thing) and __thread (a gcc thing)
+			                                                              // see here: http://stackoverflow.com/questions/12049095/c11-nontrivial-thread-local-static-variable
+			static __thread int len_header_buffer;
+
+			// its huge. do an overflow request now, and move on.
+			if(bankSize < (len+GREASE_MAX_PREFIX_HEADER)) {
+				singleLog *B = new singleLog(s,len,m);
 				internalCmdReq req(WRITE_TARGET_OVERFLOW,myId);
 				req.aux = B;
 				if(owner->internalCmdQueue.addMvIfRoom(req))
@@ -871,6 +977,17 @@ protected:
 					ERROR_OUT("Overflow. Dropping WRITE_TARGET_OVERFLOW");
 					delete B;
 				}
+				return;
+			}
+
+			len_header_buffer = putsHeader(header_buffer,(size_t) GREASE_MAX_PREFIX_HEADER,m);
+
+			// TODO copy in header...
+			if(currentBuffer->remain() >= len+len_header_buffer) {
+				uv_mutex_lock(&writeMutex);
+				currentBuffer->copyIn(header_buffer,len_header_buffer, false); // false means skip delimiter
+				currentBuffer->copyIn(s,len);
+				uv_mutex_unlock(&writeMutex);
 			} else {
 				bool rotated = false;
 				internalCmdReq req(TARGET_ROTATE_BUFFER,myId); // just rotated off a buffer
@@ -879,6 +996,7 @@ protected:
 					if(owner->internalCmdQueue.addMvIfRoom(req)) {
 						int id = 0;
 						uv_mutex_lock(&writeMutex);
+						currentBuffer->copyIn(header_buffer,len_header_buffer, false);
 						currentBuffer->copyIn(s,len);
 						id = currentBuffer->id;
 						uv_mutex_unlock(&writeMutex);
@@ -889,6 +1007,39 @@ protected:
 					}
 				}
 			}
+
+//			if(currentBuffer->remain() >= len) {
+//				uv_mutex_lock(&writeMutex);
+//				currentBuffer->copyIn(s,len);
+//				uv_mutex_unlock(&writeMutex);
+// //			} else if(bankSize < len) {
+// //				singleLog *B = new singleLog(s,len,m);
+// //				internalCmdReq req(WRITE_TARGET_OVERFLOW,myId);
+// //				req.aux = B;
+// //				if(owner->internalCmdQueue.addMvIfRoom(req))
+// //					uv_async_send(&owner->asyncInternalCommand);
+// //				else {
+// //					ERROR_OUT("Overflow. Dropping WRITE_TARGET_OVERFLOW");
+// //					delete B;
+// //				}
+//			} else {
+//				bool rotated = false;
+//				internalCmdReq req(TARGET_ROTATE_BUFFER,myId); // just rotated off a buffer
+//				rotated = rotate();
+//				if(rotated) {
+//					if(owner->internalCmdQueue.addMvIfRoom(req)) {
+//						int id = 0;
+//						uv_mutex_lock(&writeMutex);
+//						currentBuffer->copyIn(s,len);
+//						id = currentBuffer->id;
+//						uv_mutex_unlock(&writeMutex);
+//						DBG_OUT("Request ROTATE [%d] [target %d]", id, myId);
+//						uv_async_send(&owner->asyncInternalCommand);
+//					} else {
+//						ERROR_OUT("Overflow. Dropping TARGET_ROTATE_BUFFER");
+//					}
+//				}
+//			}
 		}
 
 		void flushAll(bool _rotate = true) {
@@ -919,8 +1070,8 @@ protected:
 		// called from Logger thread ONLY
 		virtual void flush(logBuf *b) {}; // flush buffer 'n'. This is ansynchronous
 		virtual void flushSync(logBuf *b) {}; // flush buffer 'n'. This is ansynchronous
-		virtual void writeAsync(heapBuf *b) {};
-		virtual void writeSync(const char *s, int len) {}; // flush buffer 'n'. This is synchronous. Writes now - skips buffering
+		virtual void writeAsync(singleLog *b) {};
+		virtual void writeSync(const char *s, int len, const logMeta &m) {}; // flush buffer 'n'. This is synchronous. Writes now - skips buffering
 		virtual void close() {};
 		virtual void sync() {};
 		virtual ~logTarget();
@@ -947,14 +1098,14 @@ protected:
 		}
 		static void write_overflow_cb(uv_write_t* req, int status) {
 			HEAVY_DBG_OUT("overflow_cb");
-			heapBuf *b = (heapBuf *) req->data;
+			singleLog *b = (singleLog *) req->data;
 			delete b;
 			delete req;
 		}
 
 
 		uv_write_t outReq;  // since this function is no re-entrant (below) we can do this
-		void flush(logBuf *b) { // this will always be called by the logger thread (via uv_async_send)
+		void flush(logBuf *b) override { // this will always be called by the logger thread (via uv_async_send)
 			uv_write_t *req = new uv_write_t;
 			writeCBData *d = new writeCBData;
 			d->t = this;
@@ -966,7 +1117,7 @@ protected:
 			uv_mutex_unlock(&b->mutex);
 //			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
 		}
-		void flushSync(logBuf *b) { // this will always be called by the logger thread (via uv_async_send)
+		void flushSync(logBuf *b) override { // this will always be called by the logger thread (via uv_async_send)
 			uv_write_t *req = new uv_write_t;
 			writeCBData *d = new writeCBData;
 			d->t = this;
@@ -978,12 +1129,12 @@ protected:
 			uv_mutex_unlock(&b->mutex);
 //			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
 		}
-		void writeAsync(heapBuf *b) {
+		void writeAsync(singleLog *b) override {
 			uv_write_t *req = new uv_write_t;
 			req->data = b;
-			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, write_overflow_cb);
+			uv_write(req, (uv_stream_t *) &tty, &b->buf.handle, 1, write_overflow_cb);
 		}
-		void writeSync(const char *s, int l) {
+		void writeSync(const char *s, int l, const logMeta &m) override {
 			uv_write_t *req = new uv_write_t;
 			uv_buf_t buf;
 			buf.base = const_cast<char *>(s);
@@ -1132,9 +1283,9 @@ protected:
 			if(req->errorno) {
 				ERROR_PERROR("file: write_overflow_cb() ",req->errorno);
 			}
-			heapBuf *b = (heapBuf *) req->data;
-			uv_fs_req_cleanup(req);
+			singleLog *b = (singleLog *) req->data;
 			delete b;
+			uv_fs_req_cleanup(req);
 //			delete req;
 		}
 
@@ -1173,7 +1324,7 @@ protected:
 			req->data = this;
 			uv_fs_fsync(owner->loggerLoop, req, fileHandle, sync_cb);
 		}
-		void flushSync(logBuf *b) { // this will always be called by the logger thread (via uv_async_send)
+		void flushSync(logBuf *b) override { // this will always be called by the logger thread (via uv_async_send)
 			uv_fs_t req;
 			uv_mutex_lock(&b->mutex);  // this lock should be ok, b/c write is async
 			HEAVY_DBG_OUT("file: flushSync() %d bytes", b->handle.len);
@@ -1183,14 +1334,16 @@ protected:
 			uv_fs_req_cleanup(&req);
 //			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
 		}
-		void writeAsync(heapBuf *b) {
+		void writeAsync(singleLog *b) override {
 			uv_fs_t *req = new uv_fs_t;
 			req->data = b;
 			// APIUPDATE libuv - will change with newer libuv
 			// uv_fs_write(uv_loop_t* loop, uv_fs_t* req, uv_file file, void* buf, size_t length, int64_t offset, uv_fs_cb cb);
-			uv_fs_write(owner->loggerLoop, req, fileHandle, (void *) b->handle.base, b->handle.len, -1, write_overflow_cb);
+
+			// TODO - make format string first...
+			uv_fs_write(owner->loggerLoop, req, fileHandle, (void *) b->buf.handle.base, b->buf.handle.len, -1, write_overflow_cb);
 		}
-		void writeSync(const char *s, int l) {
+		void writeSync(const char *s, int l, const logMeta &m) override {
 			uv_fs_t req;
 			uv_buf_t buf;
 			buf.base = const_cast<char *>(s);
@@ -1444,6 +1597,9 @@ protected:
 	typedef TWlib::TW_KHash_32<TargetId, logTarget *, TWlib::TW_Mutex, TargetId_eqstrP, TWlib::Allocator<LoggerAlloc> > TargetTable;
 	typedef TWlib::TW_KHash_32<uint32_t, Sink *, TWlib::TW_Mutex, uint32_t_eqstrP, TWlib::Allocator<LoggerAlloc> > SinkTable;
 
+	typedef TWlib::TW_KHash_32<uint32_t, logLabel *, TWlib::TW_Mutex, uint32_t_eqstrP, TWlib::Allocator<LoggerAlloc> > LabelTable;
+
+
 
 	FilterHashTable filterHashTable;  // look Filters by tag:origin
 //	FilterTable filterTable;
@@ -1476,6 +1632,11 @@ protected:
 	logTarget *defaultTarget;
 	TargetTable targets;
 	SinkTable sinks;
+
+	LabelTable tagLabels;
+	LabelTable originLabels;
+	LabelTable levelLabels;
+
 
 	uv_async_t asyncInternalCommand;
 	uv_async_t asyncExternalCommand;
@@ -1543,6 +1704,9 @@ public:
     static Handle<Value> New(const Arguments& args);
     static Handle<Value> NewInstance(const Arguments& args);
 
+    static Handle<Value> AddTagLabel(const Arguments& args);
+    static Handle<Value> AddOriginLabel(const Arguments& args);
+    static Handle<Value> AddLevelLabel(const Arguments& args);
 
     static Handle<Value> AddFilter(const Arguments& args);
     static Handle<Value> RemoveFilter(const Arguments& args);
@@ -1594,7 +1758,10 @@ protected:
     	defaultFilterOut(false),
 //    	filterTable(),
     	filterHashTable(),
-    	defaultTarget(NULL), targets(),
+    	defaultTarget(NULL),
+    	targets(),
+    	sinks(),
+    	tagLabels(), originLabels(), levelLabels(),
 	    loggerLoop(NULL)
     	{
     	    LOGGER = this;
@@ -1636,45 +1803,6 @@ public:
 		uv_async_send(&l->asyncInternalCommand);
 	}
 };
-
-
-//template<>
-//struct logTarget<GreaseLogger::logBuf,uv_tty_t> {
-//	GreaseLogger::logBuf *buffers[NUM_BANKS];
-//	uv_tty_t tty;
-//	_errcmn::err_ev err;
-//	int _log_fd;
-//	GreaseLogger *owner;
-//	logTarget(int buffer_size, GreaseLogger *o) : err(), _log_fd(0), owner(o) {
-//		for (int n=0;n<NUM_BANKS;n++) {
-//			buffers[n] = new logBuffer(buffer_size);
-//		}
-//	}
-//	void init() {
-//		uv_tty_init(owner->loggerLoop, &tty, GREASE_STDOUT, NOTREADABLE);
-////		uv_tty_init(owner->loggerLoop, &tty, GREASE_STDOUT, NOTREADABLE);
-//	}
-//	void write(char *s, int len) {
-//
-//	}
-//	void flush() { // flushes buffers. Synchronous
-//		uv_write(&write_req, (uv_stream_t*) &tty, &buf, 1, NULL);
-//	}
-//	void close() {
-//
-//	}
-//
-//};
-
-//template<>
-//uv_tty_t logTarget<GreaseLogger::logBuf,uv_tty_t>::tty;
-
-//template<>
-//void logTarget<GreaseLogger::logBuf,uv_tty_t>::init() {
-//	uv_tty_init(owner->loggerLoop, &tty, GREASE_STDOUT, NOTREADABLE);
-//}
-
-
 
 
 
