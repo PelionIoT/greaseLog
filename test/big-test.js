@@ -25,16 +25,16 @@ var endLog = function(){
 
 
 logger.addTarget({
-//	    file: "testlog.log",
+	    file: "testlog.log",
 	    callback: testCallback,
 
 	    delim: 'ϐ', // separate each entry with a special char
-// 	    rotate: {
-// 	    	max_files: 5,
-// 	    	max_file_size:  10000,
-// 	    	max_total_size: 100000
-// //	    	,rotate_on_start: true
-// 	    }
+	    rotate: {
+	    	max_files: 5,
+	    	max_file_size:  10000,
+	    	max_total_size: 100000
+//	    	,rotate_on_start: true
+	    }
 	},function(targetid,err){
 		if(err) {
 			console.log("error: "+ util.inspect(err));
@@ -70,12 +70,12 @@ logger.addTarget({
 		logger.addTarget({
 			    file: "testlog2.log",
 			    delim: '\n', // separate each entry with a hard return
-		// 	    rotate: {
-		// 	    	max_files: 5,
-		// 	    	max_file_size:  10000,
-		// 	    	max_total_size: 100000
-		// //	    	,rotate_on_start: true
-		// 	    }
+			    rotate: {
+			    	max_files: 5,
+			    	max_file_size:  10000,
+			    	max_total_size: 100000
+		//	    	,rotate_on_start: true
+			    }
 			},function(tid2,err){
 
 
@@ -132,7 +132,7 @@ logger.addTarget({
 					console.time('logit');
 					logger.error("************ FIRST **********");
 
-					var N=100000;
+					var N=10000;
 
 					var interval = setInterval(function(){
 						for(var n=0;n<1000;n++) {
