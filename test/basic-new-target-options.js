@@ -52,8 +52,12 @@ logger.addTarget({
 	    file: "rotateThis.log",
 	    delim: "\n",
 	    format: {
+	    	pre: "pre> ",
 	    	time: "[%ld:%d] ",
-	    	level: "<%s> "
+	    	level: "<%s> ",
+	    	tag: "{%s} ",
+	    	origin: "(%s) ",
+	    	post: "<post "
 	    },
 	    rotate: {
 	    	max_files: 5,

@@ -113,7 +113,7 @@ struct uint64_t_eqstrP {
 //  assert(0);
 
 #define COMMAND_QUEUE_NODE_SIZE 200
-#define INTERNAL_QUEUE_SIZE 200
+#define INTERNAL_QUEUE_SIZE 200          // must be at least as big as PRIMARY_BUFFER_ENTRIES
 #define V8_LOG_CALLBACK_QUEUE_SIZE 10
 #define MAX_TARGET_CALLBACK_STACK 20
 #define TARGET_CALLBACK_QUEUE_WAIT 2000000  // 2 seconds
@@ -139,8 +139,13 @@ struct uint64_t_eqstrP {
 #define NUM_BANKS 4
 #define LOGGER_DEFAULT_CHUNK_SIZE  1500
 #define DEFAULT_BUFFER_SIZE  2000
+
+#define PRIMARY_BUFFER_ENTRIES 100   // this is the amount of entries we hold in memory, which will be logged by the logger thread.
+                                     // each entry is DEFAULT_BUFFER_SIZE
+                                     // if a log message is > than DEFAULT_BUFFER_SIZE, it logged as an overflow.
+#define PRIMARY_BUFFER_SIZE (PRIMARY_BUFFER_ENTRIES*DEFAULT_BUFFER_SIZE)
 // Sink settings
-#define SINK_BUFFER_SIZE (4096*2)
+#define SINK_BUFFER_SIZE (DEFAULT_BUFFER_SIZE*2)
 #define BUFFERS_PER_SINK 4
 
 
@@ -183,10 +188,11 @@ public:
 		};
 		heapBufManager *return_cb;
 		uv_buf_t handle;
+		int used;
 //		uv_buf_t getUvBuf() {
 //			return uv_buf_init(handle.base,handle.len);
 //		}
-		explicit heapBuf(int n) : return_cb(NULL) {
+		explicit heapBuf(int n) : return_cb(NULL), used(0) {
 			handle.len = n;
 			handle.base = (char *) LMALLOC(n);
 		}
@@ -201,14 +207,16 @@ public:
 			handle.base = (char *) LMALLOC(handle.len);
 			::memset(handle.base,0,(int) handle.len);
 			::memcpy(handle.base,buffer,len);
+			used = handle.len;
 		}
-		heapBuf(const char *d, int n) : return_cb(NULL) {
+		heapBuf(const char *d, int n) : return_cb(NULL), used(0) {
 			handle.len = n;
 			handle.base = (char *) LMALLOC(n);
 			::memcpy(handle.base,d,n);
 		}
 		heapBuf(heapBuf &&o) {
 			handle = o.handle;
+			used = o.used; o.used =0;
 			o.handle.base = NULL;
 			o.handle.len = 0;
 			o.return_cb = o.return_cb; o.return_cb = NULL;
@@ -217,11 +225,13 @@ public:
 			if(handle.base) LFREE(handle.base);
 			handle.len = n;
 			handle.base = (char *) LMALLOC(handle.len);
+			used = 0;
 		}
 		int memcpy(const char *s, size_t l) {
 			if(handle.base) {
 				if(l > handle.len) l = (int) handle.len;
 				::memcpy(handle.base,s,l);
+				used = l;
 				return l;
 			} else
 				return 0;
@@ -232,6 +242,7 @@ public:
 				ret.handle.base = (char *) LMALLOC(handle.len);
 				ret.handle.len = handle.len;
 				::memcpy(ret.handle.base,handle.base,handle.len);
+				ret.used = used;
 			}
 			ret.return_cb = return_cb;
 			return ret;
@@ -247,6 +258,7 @@ public:
 			if(handle.base) LFREE(handle.base);
 		}
 		heapBuf& operator=(heapBuf&& o) {
+			used = o.used; o.used =0;
 			handle = o.handle;
 			o.handle.base = NULL;
 			o.handle.len = 0;
@@ -255,11 +267,17 @@ public:
 		}
 	};
 
-	class singleLog {
+	class singleLog final {
 	public:
 		logMeta m;
 		heapBuf buf;
+		singleLog() = delete;
 		singleLog(const char *d, int l, const logMeta &_m) : m(_m), buf(d,l) {}
+		singleLog(int len) : m(), buf(len) {}
+		void clear() {
+			buf.used = 0;
+			m.level = 0; m.origin = 0; m.target = 0; m.tag = 0;
+		}
 	};
 
 	class logLabel final {
@@ -297,6 +315,8 @@ public:
 			return l;
 		}
 	};
+
+	typedef TWlib::TW_KHash_32<uint32_t, logLabel *, TWlib::TW_Mutex, uint32_t_eqstrP, TWlib::Allocator<LoggerAlloc> > LabelTable;
 
 	class delim_data final {
 	public:
@@ -351,6 +371,10 @@ protected:
 	static GreaseLogger *LOGGER;  // this class is a Singleton
 	int bufferSize;  // size of each buffer
 	int chunkSize;
+	// these are the primary buffers for all log messages. Logs are put here before targets are found,
+	// or anything else happens (other than sift())
+	TWlib::tw_safeCircular<singleLog  *, LoggerAlloc > masterBufferAvail;    // <-- available buffers (starts out full)
+//	TWlib::tw_safeCircular<singleLog  *, LoggerAlloc > masterBufferWriteout; // <-- buffers to writeout (start out empty)
 
 	uv_thread_t logThreadId;
 	uv_async_t asyncV8LogCallback;  // used to wakeup v8 to call log callbacks (see v8LogCallbacks)
@@ -658,7 +682,7 @@ protected:
 		uv_buf_t handle;
 		uv_mutex_t mutex;
 		int id;
-		int space;
+		const uint32_t space;
 		delim_data delim;
 		int delimLen;
 		logBuf(int s, int id, delim_data _delim) : id(id), space(s), delim(std::move(_delim)) {
@@ -673,6 +697,8 @@ protected:
 		void copyIn(const char *s, int n, bool use_delim = true) {
 			if(n > 0) {
 				uv_mutex_lock(&mutex);
+				assert(n <= space);
+				assert(handle.len <= space);
 				memcpy((void *) (handle.base + handle.len), s, n);
 				handle.len += n;
 				if(!delim.delim.empty() && use_delim) {
@@ -693,6 +719,7 @@ protected:
 			ret = space - handle.len;
 			if(!delim.delim.empty()) ret = ret - delim.delim.handle.len;
 			uv_mutex_unlock(&mutex);
+			if(ret < 0) ret = 0;
 			return ret;
 		}
 	};
@@ -708,6 +735,7 @@ protected:
 
 	enum internalCommand {
 		INTERNALNOOP,
+		NEW_LOG,
 		TARGET_ROTATE_BUFFER,   // we had to rotate buffers on a target
 		WRITE_TARGET_OVERFLOW,   // too big to fit in buffer... will flush existing target, and then make large write.
 		INTERNAL_SHUTDOWN
@@ -834,6 +862,9 @@ protected:
 		logLabel tagFormat;
 		logLabel originFormat;
 		logLabel levelFormat;
+		logLabel preFormat;
+		logLabel postFormat;
+
 
 		void setTimeFormat(const char *s, int len) {
 			timeFormat.setUTF8(s,len);
@@ -847,16 +878,26 @@ protected:
 		void setLevelFormat(const char *s, int len) {
 			levelFormat.setUTF8(s,len);
 		}
+		void setPreFormat(const char *s, int len) {
+			preFormat.setUTF8(s,len);
+		}
+		void setPostFormat(const char *s, int len) {
+			postFormat.setUTF8(s,len);
+		}
 
 		size_t putsHeader(char *mem, size_t remain, const logMeta &m) {
 			static __thread struct timeb _timeb;
 			size_t space = remain;
 			logLabel *label;
 			int n = 0;
+			if(preFormat.length() > 0 && space > 0) {
+				n = snprintf(mem + (remain-space),space,preFormat.buf.handle.base);
+				space = space - n;
+			}
 			if(timeFormat.length() > 0 && space > 0) {
 //				time_t curr = time(NULL);
 				ftime(&_timeb);
-				n = snprintf(mem,space,timeFormat.buf.handle.base,_timeb.time,_timeb.millitm);
+				n = snprintf(mem+(remain-space),space,timeFormat.buf.handle.base,_timeb.time,_timeb.millitm);
 				space = space - n;
 			}
 			if(levelFormat.length() > 0 && space > 0) {
@@ -877,7 +918,18 @@ protected:
 					space = space - n;
 				}
 			}
+			// returns the amount of space used.
+			return remain-space;
+		}
 
+		size_t putsFooter(char *mem, size_t remain) {
+			size_t space = remain;
+			logLabel *label;
+			int n = 0;
+			if(postFormat.length() > 0 && space > 0) {
+				n = snprintf(mem,space,postFormat.buf.handle.base);
+				space = space - n;
+			}
 			// returns the amount of space used.
 			return remain-space;
 		}
@@ -888,8 +940,9 @@ protected:
 		public:
 			logTarget *t;
 			logBuf *b;
+			bool nocallback;
 			writeCBData() : t(NULL), b(NULL) {}
-			writeCBData(logTarget *_t, logBuf *_b) : t(_t), b(_b) {}
+			writeCBData(logTarget *_t, logBuf *_b) : t(_t), b(_b), nocallback(false) {}
 			writeCBData& operator=(writeCBData&& o) {
 				b = o.b;
 				t = o.t;
@@ -903,8 +956,8 @@ protected:
 			availBuffers.add(b);
 		}
 
-		void returnBuffer(logBuf *b, bool sync = false) {
-			if(logCallbackSet && b->handle.len > 0) {
+		void returnBuffer(logBuf *b, bool sync = false, bool nocallback = false) {
+			if(!nocallback && logCallbackSet && b->handle.len > 0) {
 				writeCBData cbdat(this,b);
 				if(!owner->v8LogCallbacks.addMvIfRoom(cbdat)) {
 					ERROR_OUT(" !!! v8LogCallbacks is full! Can't rotate. Callback will be skipped.");
@@ -959,12 +1012,14 @@ protected:
 			return ret;
 		}
 
-		void write(const char *s, int len, const logMeta &m) {  // called from node thread...
+		void write(const char *s, uint32_t len, const logMeta &m) {  // called from node thread...
 			static __thread char header_buffer[GREASE_MAX_PREFIX_HEADER]; // used to make header of log line. for speed it's static. this is __thread
 			                                                              // so when it is called from multiple threads buffers don't conflict
 			                                                              // for a discussion of thread_local (a C++ 11 thing) and __thread (a gcc thing)
 			                                                              // see here: http://stackoverflow.com/questions/12049095/c11-nontrivial-thread-local-static-variable
+			static __thread char footer_buffer[GREASE_MAX_PREFIX_HEADER];
 			static __thread int len_header_buffer;
+			static __thread int len_footer_buffer;
 
 			// its huge. do an overflow request now, and move on.
 			if(bankSize < (len+GREASE_MAX_PREFIX_HEADER)) {
@@ -981,12 +1036,17 @@ protected:
 			}
 
 			len_header_buffer = putsHeader(header_buffer,(size_t) GREASE_MAX_PREFIX_HEADER,m);
+			len_footer_buffer = putsFooter(footer_buffer,(size_t) GREASE_MAX_PREFIX_HEADER-len_header_buffer);
+			bool no_footer = true;
+			if(len_footer_buffer > 0) no_footer = false;
 
 			// TODO copy in header...
 			if(currentBuffer->remain() >= len+len_header_buffer) {
 				uv_mutex_lock(&writeMutex);
 				currentBuffer->copyIn(header_buffer,len_header_buffer, false); // false means skip delimiter
-				currentBuffer->copyIn(s,len);
+				currentBuffer->copyIn(s,len,no_footer);
+				if(!no_footer)
+					currentBuffer->copyIn(footer_buffer,len_footer_buffer);
 				uv_mutex_unlock(&writeMutex);
 			} else {
 				bool rotated = false;
@@ -997,7 +1057,9 @@ protected:
 						int id = 0;
 						uv_mutex_lock(&writeMutex);
 						currentBuffer->copyIn(header_buffer,len_header_buffer, false);
-						currentBuffer->copyIn(s,len);
+						currentBuffer->copyIn(s,len,no_footer);
+						if(!no_footer)
+							currentBuffer->copyIn(footer_buffer,len_footer_buffer);
 						id = currentBuffer->id;
 						uv_mutex_unlock(&writeMutex);
 						DBG_OUT("Request ROTATE [%d] [target %d]", id, myId);
@@ -1042,25 +1104,25 @@ protected:
 //			}
 		}
 
-		void flushAll(bool _rotate = true) {
+		void flushAll(bool _rotate = true, bool nocallbacks = false) {
 			if(_rotate) rotate();
 			while(1) {
 				logBuf *b = NULL;
 				if(writeOutBuffers.remove(b)) {
-					flush(b);
+					flush(b, nocallbacks);
 				} else
 					break;
 			}
 			sync();
 		}
 
-		void flushAllSync(bool _rotate = true) {
+		void flushAllSync(bool _rotate = true, bool nocallbacks = false) {
 			HEAVY_DBG_OUT("flushAllSync()");
 			if(_rotate) rotate();
 			while(1) {
 				logBuf *b = NULL;
 				if(writeOutBuffers.remove(b)) {
-					flushSync(b);
+					flushSync(b,nocallbacks);
 				} else
 					break;
 			}
@@ -1068,8 +1130,8 @@ protected:
 		}
 
 		// called from Logger thread ONLY
-		virtual void flush(logBuf *b) {}; // flush buffer 'n'. This is ansynchronous
-		virtual void flushSync(logBuf *b) {}; // flush buffer 'n'. This is ansynchronous
+		virtual void flush(logBuf *b, bool nocallbacks = false) {}; // flush buffer 'n'. This is ansynchronous
+		virtual void flushSync(logBuf *b, bool nocallbacks = false) {}; // flush buffer 'n'. This is ansynchronous
 		virtual void writeAsync(singleLog *b) {};
 		virtual void writeSync(const char *s, int len, const logMeta &m) {}; // flush buffer 'n'. This is synchronous. Writes now - skips buffering
 		virtual void close() {};
@@ -1092,8 +1154,7 @@ protected:
 		static void write_cb(uv_write_t* req, int status) {
 //			HEAVY_DBG_OUT("write_cb");
 			writeCBData *d = (writeCBData *) req->data;
-			d->t->returnBuffer(d->b);
-
+			d->t->returnBuffer(d->b,false,d->nocallback);
 			delete req;
 		}
 		static void write_overflow_cb(uv_write_t* req, int status) {
@@ -1105,11 +1166,12 @@ protected:
 
 
 		uv_write_t outReq;  // since this function is no re-entrant (below) we can do this
-		void flush(logBuf *b) override { // this will always be called by the logger thread (via uv_async_send)
+		void flush(logBuf *b,bool nocallbacks=false) override { // this will always be called by the logger thread (via uv_async_send)
 			uv_write_t *req = new uv_write_t;
 			writeCBData *d = new writeCBData;
 			d->t = this;
 			d->b = b;
+			d->nocallback = nocallbacks;
 			req->data = d;
 			uv_mutex_lock(&b->mutex);  // this lock should be ok, b/c write is async
 			HEAVY_DBG_OUT("TTY: flush() %d bytes", b->handle.len);
@@ -1117,19 +1179,24 @@ protected:
 			uv_mutex_unlock(&b->mutex);
 //			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
 		}
-		void flushSync(logBuf *b) override { // this will always be called by the logger thread (via uv_async_send)
+		void flushSync(logBuf *b,bool nocallbacks=false) override { // this will always be called by the logger thread (via uv_async_send)
 			uv_write_t *req = new uv_write_t;
 			writeCBData *d = new writeCBData;
 			d->t = this;
 			d->b = b;
+			d->nocallback = nocallbacks;
 			req->data = d;
 			uv_mutex_lock(&b->mutex);  // this lock should be ok, b/c write is async
 			HEAVY_DBG_OUT("TTY: flushSync() %d bytes", b->handle.len);
+			returnBuffer(b,true,nocallbacks);
 			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, NULL);
 			uv_mutex_unlock(&b->mutex);
 //			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
 		}
 		void writeAsync(singleLog *b) override {
+//			currentBuffer->copyIn(header_buffer,len_header_buffer, false); // false means skip delimiter
+//			currentBuffer->copyIn(s,len);
+//			currentBuffer->copyIn(footer_buffer,len_footer_buffer);
 			uv_write_t *req = new uv_write_t;
 			req->data = b;
 			uv_write(req, (uv_stream_t *) &tty, &b->buf.handle, 1, write_overflow_cb);
@@ -1274,7 +1341,7 @@ protected:
 			}
 			uv_rwlock_wrunlock(&ft->wrLock);
 
-			d->t->returnBuffer(d->b);
+			d->t->returnBuffer(d->b,false,d->nocallback);
 			uv_fs_req_cleanup(req);
 			delete req;
 		}
@@ -1290,11 +1357,12 @@ protected:
 		}
 
 		uv_write_t outReq;  // since this function is no re-entrant (below) we can do this
-		void flush(logBuf *b) { // this will always be called by the logger thread (via uv_async_send)
+		void flush(logBuf *b, bool nocallbacks = false) { // this will always be called by the logger thread (via uv_async_send)
 			uv_fs_t *req = new uv_fs_t;
 			writeCBData *d = new writeCBData;
 			d->t = this;
 			d->b = b;
+			d->nocallback = nocallbacks;
 			req->data = d;
 			uv_mutex_lock(&b->mutex);  // this lock should be ok, b/c write is async
 			HEAVY_DBG_OUT("file: flush() %d bytes", b->handle.len);
@@ -1324,13 +1392,14 @@ protected:
 			req->data = this;
 			uv_fs_fsync(owner->loggerLoop, req, fileHandle, sync_cb);
 		}
-		void flushSync(logBuf *b) override { // this will always be called by the logger thread (via uv_async_send)
+		void flushSync(logBuf *b, bool nocallbacks = false) override { // this will always be called by the logger thread (via uv_async_send)
 			uv_fs_t req;
 			uv_mutex_lock(&b->mutex);  // this lock should be ok, b/c write is async
 			HEAVY_DBG_OUT("file: flushSync() %d bytes", b->handle.len);
 			uv_fs_write(owner->loggerLoop, &req, fileHandle, (void *) b->handle.base, b->handle.len, -1, NULL);
 //			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, NULL);
 			uv_mutex_unlock(&b->mutex);
+			returnBuffer(b,true,nocallbacks);
 			uv_fs_req_cleanup(&req);
 //			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
 		}
@@ -1385,7 +1454,7 @@ protected:
 				path = o.path; o.path = NULL;
 				size = o.size;
 				num = o.num;
-				ownMem = true; o.ownMem = false;
+				ownMem = o.ownMem; o.ownMem = false;
 				return *this;
 			}
 			~rotatedFile() {
@@ -1405,16 +1474,19 @@ protected:
 			}
 		};
 
+		uv_mutex_t rotateFileMutex;
 		TWlib::tw_safeCircular<rotatedFile, LoggerAlloc > rotatedFiles;
 
 		void rotate_files() {
 			rotatedFile f;
+			uv_mutex_lock(&rotateFileMutex);  // not needed
 			TWlib::tw_safeCircular<rotatedFile, LoggerAlloc > tempFiles(MAX_ROTATED_FILES,true);
 			int n = rotatedFiles.remaining();
 			while (rotatedFiles.removeMv(f)) {
 				uv_fs_t req;
 				if(filerotation.max_files && ((n+1) > filerotation.max_files)) { // remove file
 					int r = uv_fs_unlink(owner->loggerLoop,&req,f.path,NULL);
+					DBG_OUT("rotate_files::::::::::::::::: fs_unlink %s\n",f.path);
 					if(r) {
 						uv_err_t e = uv_last_error(owner->loggerLoop);
 						if(e.code != UV_ENOENT) {
@@ -1424,6 +1496,7 @@ protected:
 				} else {  // move file to new name
 //					char *newname = rotatedFile::strRotateName(myPath,f.num+1);
 					rotatedFile new_f(myPath,f.num+1);
+					DBG_OUT("rotate_files::::::::::::::::: fs_rename\n");
 					int r = uv_fs_rename(owner->loggerLoop, &req, f.path, new_f.path, NULL);
 					if(r) {
 						uv_err_t e = uv_last_error(owner->loggerLoop);
@@ -1453,6 +1526,7 @@ protected:
 				tempFiles.addMv(new_f);
 			rotatedFiles.transferFrom(tempFiles);
 			current_size = 0; // we will use a new file, size is 0
+			uv_mutex_unlock(&rotateFileMutex);
 		}
 
 		bool check_files() {
@@ -1502,6 +1576,7 @@ protected:
 
 
 		void post_cstor(int buffer_size, uint32_t id, GreaseLogger *o, int flags, int mode, char *path, target_start_info *readydata, targetReadyCB cb) {
+			uv_mutex_init(&rotateFileMutex);
 			uv_rwlock_init(&wrLock);
 			readydata->needsAsyncQueue = true;
 			myPath = strdup(path);
@@ -1513,9 +1588,7 @@ protected:
 			} else {
 				fileFs.data = this;
 
-//				char *rotatename = rotatedFile::strRotateName(path,1);
-//				DBG_OUT("rotatename: %s", rotatename);
-//				free(rotatename);
+
 				if(filerotation.enabled) {
 					bool needs_rotate = check_files();
 					HEAVY_DBG_OUT("rotate_files: total files = %d total size = %d\n",rotatedFiles.remaining()+1,all_files_size);
@@ -1566,11 +1639,11 @@ protected:
 
 		// 			d->t->returnBuffer(d->b);
 
-		void flush(logBuf *b) {
-			returnBuffer(b);
+		void flush(logBuf *b,bool nocallbacks = false) {
+			returnBuffer(b,false,nocallbacks);
 		}; // flush buffer 'n'. This is ansynchronous
-		void flushSync(logBuf *b) {
-			returnBuffer(b,true);
+		void flushSync(logBuf *b, bool nocallbacks = false) {
+			returnBuffer(b,true,nocallbacks);
 		}; // flush buffer 'n'. This is ansynchronous
 		void writeAsync(heapBuf *b) {
 			// sechdule v8 callback now
@@ -1588,13 +1661,12 @@ protected:
 	TWlib::tw_safeCircular<GreaseLogger::logTarget::writeCBData, LoggerAlloc > v8LogCallbacks;
 
 
-	uv_mutex_t modifyFilters; // if the table is being modifued, lock first
+	uv_mutex_t modifyFilters; // if the table is being modified, lock first
 	typedef TWlib::TW_KHash_32<uint64_t, FilterList *, TWlib::TW_Mutex, uint64_t_eqstrP, TWlib::Allocator<LoggerAlloc> > FilterHashTable;
 	typedef TWlib::TW_KHash_32<uint32_t, Filter *, TWlib::TW_Mutex, uint32_t_eqstrP, TWlib::Allocator<LoggerAlloc> > FilterTable;
 	typedef TWlib::TW_KHash_32<TargetId, logTarget *, TWlib::TW_Mutex, TargetId_eqstrP, TWlib::Allocator<LoggerAlloc> > TargetTable;
 	typedef TWlib::TW_KHash_32<uint32_t, Sink *, TWlib::TW_Mutex, uint32_t_eqstrP, TWlib::Allocator<LoggerAlloc> > SinkTable;
 
-	typedef TWlib::TW_KHash_32<uint32_t, logLabel *, TWlib::TW_Mutex, uint32_t_eqstrP, TWlib::Allocator<LoggerAlloc> > LabelTable;
 
 
 
@@ -1681,8 +1753,8 @@ protected:
 public:
 	int log(const logMeta &f, const char *s, int len); // does the work of logging (for users in C++)
 	int logSync(const logMeta &f, const char *s, int len); // does the work of logging. now. will empty any buffers first.
-	static void flushAll();
-	static void flushAllSync();
+	static void flushAll(bool nocallbacks = false);
+	static void flushAllSync(bool rotate = true,bool nocallbacks = false);
 
 //	static Handle<Value> Init(const Arguments& args);
 //	static void ExtendFrom(const Arguments& args);
@@ -1732,10 +1804,12 @@ protected:
 	static void _doV8Callback(GreaseLogger::logTarget::writeCBData &data); // <--- only call this one from v8 thread!
 	static void start_target_cb(GreaseLogger *l, _errcmn::err_ev &err, void *d);
 	static void start_logger_cb(GreaseLogger *l, _errcmn::err_ev &err, void *d);
-
-    GreaseLogger(int buffer_size , int chunk_size) :
+// int buffer_size = DEFAULT_BUFFER_SIZE, int chunk_size = LOGGER_DEFAULT_CHUNK_SIZE
+    GreaseLogger(int buffer_size = DEFAULT_BUFFER_SIZE, int chunk_size = LOGGER_DEFAULT_CHUNK_SIZE) :
     	nextFilterId(1), nextTargetId(1),
     	bufferSize(buffer_size), chunkSize(chunk_size),
+    	masterBufferAvail(PRIMARY_BUFFER_ENTRIES),
+//    	masterBufferWriteout(PRIMARY_BUFFER_ENTRIES),
     	targetCallbackQueue(MAX_TARGET_CALLBACK_STACK, true),
     	err(),
 //    	showNoLevel(true), showNoTag(true), showNoOrigin(true),
@@ -1761,6 +1835,11 @@ protected:
     	    uv_mutex_init(&nextIdMutex);
     		uv_mutex_init(&modifyFilters);
     		uv_mutex_init(&modifyTargets);
+
+    		for(int n=0;n<PRIMARY_BUFFER_ENTRIES;n++) {
+    			singleLog *l = new singleLog(DEFAULT_BUFFER_SIZE);
+    			masterBufferAvail.add(l);
+    		}
     	}
 
     ~GreaseLogger() {
@@ -1772,6 +1851,14 @@ protected:
     		delete (*t);
     		iter.getNext();
     	}
+    	singleLog *l = NULL;
+    	while(masterBufferAvail.remove(l)) {
+    		delete l;
+    	}
+//    	while(masterBufferWriteout.remove(l)) {
+//    		delete l;
+//    	}
+
     }
 
 public:

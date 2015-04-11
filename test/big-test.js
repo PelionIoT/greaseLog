@@ -17,6 +17,13 @@ var testCallback = function(str,id) {
 		console.log("CB (" + id + ")>" + entries[n] + "<");
 }
 
+var endLog = function(){
+	logger.error("************ LAST **********");
+	logger.debug('Eds', "......... LAST ............");			
+	console.timeEnd('logit');
+}
+
+
 logger.addTarget({
 //	    file: "testlog.log",
 	    callback: testCallback,
@@ -71,58 +78,88 @@ logger.addTarget({
 		// 	    }
 			},function(tid2,err){
 
-				if(err) {
-					console.log("error: "+ util.inspect(err));
-				} else {
-					console.log("added target: " + tid2);
-					var ret = logger.addFilter({ 
-						target: tid2,
-						mask: logger.LEVELS.error
-					});
-					console.log("added filter: " + ret);
-					var ret = logger.addFilter({ 
-						target: tid2,
-						mask: logger.LEVELS.debug,
-						tag: 'Eds'
-					});
-					console.log("added filter: " + ret);
-					var ret = logger.addFilter({ 
-						target: tid2,
-						mask: logger.LEVELS.debug,
-						tag: 'Eds',
-						origin: 'special.js'
-					});
-					console.log("added targets / filter (2): " + ret);
 
+
+
+
+
+			if(err) {
+				console.log("error: "+ util.inspect(err));
+			} else {
+				console.log("added target: " + tid2);
+				var ret = logger.addFilter({ 
+					target: tid2,
+					mask: logger.LEVELS.error
+				});
+				console.log("added filter: " + ret);
+				var ret = logger.addFilter({ 
+					target: tid2,
+					mask: logger.LEVELS.debug,
+					tag: 'Eds'
+				});
+				console.log("added filter: " + ret);
+				var ret = logger.addFilter({ 
+					target: tid2,
+					mask: logger.LEVELS.debug,
+					tag: 'Eds',
+					origin: 'special.js'
+				});
+				console.log("added targets / filter (2): " + ret);
+
+
+				logger.addTarget({
+					    file: "errorOnly.log",
+					    delim: '\n', // separate each entry with a hard return
+				// 	    rotate: {
+				// 	    	max_files: 5,
+				// 	    	max_file_size:  10000,
+				// 	    	max_total_size: 100000
+				// //	    	,rotate_on_start: true
+				// 	    }
+					},function(tid3,err){
+
+					
+					if(err) {
+						console.log("error: "+ util.inspect(err));
+					} else {
+						console.log("added target: " + tid3);
+						var ret = logger.addFilter({ 
+							target: tid3,
+							mask: logger.LEVELS.error
+						});
 
 ///////////
-							console.time('logit');
-		logger.error("************ FIRST **********");
+					console.time('logit');
+					logger.error("************ FIRST **********");
 
+					var N=100000;
 
+					var interval = setInterval(function(){
+						for(var n=0;n<1000;n++) {
+								logger.debug("....DEBUG(1)....");
+							logger.debug('Eds', "....DEBUG(2)....");			
+							logger.error("....ERROR....");
+							logger.log(" log log log");
+							logger.debug('special.js','Eds','...origin/Eds DEBUG....');
+							// console.log("....DEBUG....");
+							// console.log('Eds', "....DEBUG....");			
+							// console.log("....ERROR....");
+							// console.log(" log log log");
+							N--;
+						}
 
-		for(var n=0;n<1000;n++) {
-				logger.debug("....DEBUG(1)....");
-			logger.debug('Eds', "....DEBUG(2)....");			
-			logger.error("....ERROR....");
-			logger.log(" log log log");
-
-			// console.log("....DEBUG....");
-			// console.log('Eds', "....DEBUG....");			
-			// console.log("....ERROR....");
-			// console.log(" log log log");
-			N--;
-		}
-
-		logger.error("************ LAST **********");
-		console.timeEnd('logit');
+						if(N <= 0) {
+							clearInterval(interval);
+							endLog();
+						}
+					},40);
+				}
 /////////////////
-			
+				});				
 
 
 				}
 			});
-
 
 	});
 

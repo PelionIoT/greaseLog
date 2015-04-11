@@ -33,7 +33,7 @@ bool GreaseLogger::sift(const logMeta &f, FilterList *&list) { // returns true, 
 	FilterHash hash = filterhash(f.tag,f.origin);
 
 	uv_mutex_lock(&modifyFilters);
-	if(!filterHashTable.find(hash,list)) {
+	if(ret && !filterHashTable.find(hash,list)) {
 		if(defaultFilterOut)
 			ret = false;
 		list = NULL;
@@ -46,24 +46,58 @@ GreaseLogger *GreaseLogger::LOGGER = NULL;
 
 void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) {
 	GreaseLogger::internalCmdReq req;
-	while(LOGGER->internalCmdQueue.removeMv(req)) {
-		logTarget *t = NULL;
-    	if(req.d > 0)
-    		t = GreaseLogger::LOGGER->getTarget(req.d);
-    	else
-    		t = GreaseLogger::LOGGER->defaultTarget;
-    	assert(t);
+	logTarget *t = NULL;
+	while(GreaseLogger::LOGGER->internalCmdQueue.removeMv(req)) {
     	switch(req.c) {
-		case TARGET_ROTATE_BUFFER:
+    	case NEW_LOG:
+    		{
+    			// process a single log message
+    			singleLog *l = (singleLog *) req.aux;
+    			assert(l);
+    			FilterList *list = NULL;
+    			if(GreaseLogger::LOGGER->sift(l->m, list)) { // should always be true (checked in v8 thread)
+        			if(!list) {
+        				GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,l->buf.used,l->m);
+        			} else if (list->valid(l->m.level)) {
+        				int n = 0;
+        				while(list->list[n].id != 0) {
+        					logTarget *t = NULL;
+        					if((list->list[n].levelMask & l->m.level) && GreaseLogger::LOGGER->targets.find(list->list[n].targetId, t)) {
+//        						DBG_OUT("write out: %s",l->buf.handle.base);
+        						t->write(l->buf.handle.base,(uint32_t) l->buf.used,l->m);
+        					} else {
+        						ERROR_OUT("Orphaned target id: %d\n",list->list[n].targetId);
+        					}
+        					n++;
+        				}
+        			} else {  // write out to default target if the list does not apply to this level
+        		//		HEAVY_DBG_OUT("pass thru to default");
+        				GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,(uint32_t)l->buf.used,l->m);
+        			}
+    			}
+    			l->clear();
+    			GreaseLogger::LOGGER->masterBufferAvail.add(l); // place buffer back in queue
+    		}
+    		break;
+    	case TARGET_ROTATE_BUFFER:
 		    {
+		    	if(req.d > 0)
+		    		t = GreaseLogger::LOGGER->getTarget(req.d);
+		    	else
+		    		t = GreaseLogger::LOGGER->defaultTarget;
+		    	assert(t);
 				DBG_OUT("TARGET_ROTATE_BUFFER [%d]", req.auxInt);
 				t->flushAll(false);
 //		    	t->flush(req.auxInt);
 		    }
 			break;
-
 		case WRITE_TARGET_OVERFLOW:
 			{
+		    	if(req.d > 0)
+		    		t = GreaseLogger::LOGGER->getTarget(req.d);
+		    	else
+		    		t = GreaseLogger::LOGGER->defaultTarget;
+		    	assert(t);
 				DBG_OUT("WRITE_TARGET_OVERFLOW");
 				t->flushAll();
 				singleLog *big = (singleLog *) req.aux;
@@ -83,7 +117,7 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
     		uv_close((uv_handle_t *)&LOGGER->asyncExternalCommand, NULL);
     		uv_close((uv_handle_t *)&LOGGER->asyncInternalCommand, NULL);
     		// flush all queues
-    		flushAllSync();
+    		flushAllSync(true,true); // do rotation but no callbacks
     		// kill thread
 
     	}
@@ -141,6 +175,8 @@ void GreaseLogger::mainThread(void *p) {
 
 int GreaseLogger::log(const logMeta &f, const char *s, int len) { // does the work of logging
 	FilterList *list = NULL;
+	if(len > GREASE_MAX_MESSAGE_SIZE)
+		return GREASE_OVERFLOW;
 	if(sift(f,list)) {
 		return _log(list,f,s,len);
 	} else
@@ -210,7 +246,7 @@ int GreaseLogger::logSync(const logMeta &f, const char *s, int len) { // does th
 	} else
 		return GREASE_OK;
 }
-void GreaseLogger::flushAll() { // flushes buffers. Synchronous
+void GreaseLogger::flushAll(bool nocallbacks) { // flushes buffers. Synchronous
 	if(LOGGER->defaultTarget) {
 		LOGGER->defaultTarget->flushAll();
 	} else
@@ -220,11 +256,11 @@ void GreaseLogger::flushAll() { // flushes buffers. Synchronous
 	GreaseLogger::TargetTable::HashIterator iter(LOGGER->targets);
 	while(!iter.atEnd()) {
 		t = iter.data();
-		(*t)->flushAll();
+		(*t)->flushAll(true,nocallbacks);
 		iter.getNext();
 	}
 }
-void GreaseLogger::flushAllSync() { // flushes buffers. Synchronous
+void GreaseLogger::flushAllSync(bool rotate, bool nocallbacks) { // flushes buffers. Synchronous
 	if(LOGGER->defaultTarget) {
 		LOGGER->defaultTarget->flushAllSync();
 	} else
@@ -234,7 +270,7 @@ void GreaseLogger::flushAllSync() { // flushes buffers. Synchronous
 	GreaseLogger::TargetTable::HashIterator iter(LOGGER->targets);
 	while(!iter.atEnd()) {
 		t = iter.data();
-		(*t)->flushAllSync();
+		(*t)->flushAllSync(rotate,nocallbacks);
 		iter.getNext();
 	}
 }
@@ -254,7 +290,9 @@ GreaseLogger::logTarget::logTarget(int buffer_size, uint32_t id, GreaseLogger *o
 		writeOutBuffers(NUM_BANKS-1), // there should always be one buffer available for writingTo
 		waitingOnCBBuffers(NUM_BANKS-1),
 		err(), _log_fd(0),
-		currentBuffer(NULL), bankSize(buffer_size), owner(o), myId(id) {
+		currentBuffer(NULL), bankSize(buffer_size), owner(o), myId(id),
+		timeFormat(),tagFormat(),originFormat(),levelFormat(),preFormat(),postFormat()
+{
 	uv_mutex_init(&writeMutex);
 	for (int n=0;n<NUM_BANKS;n++) {
 		_buffers[n] = new logBuf(bankSize,n,delim.duplicate());
@@ -729,7 +767,12 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 
 		if(jsFormat->IsObject()) {
 			Local<Object> jsObj = jsFormat->ToObject();
-			Local<Value> jsKey = jsObj->Get(String::New("time"));
+			Local<Value> jsKey = jsObj->Get(String::New("pre"));
+			if(jsKey->IsString()) {
+				v8::String::Utf8Value v8str(jsKey);
+				targ->setPreFormat(v8str.operator *(),v8str.length());
+			}
+			jsKey = jsObj->Get(String::New("time"));
 			if(jsKey->IsString()) {
 				v8::String::Utf8Value v8str(jsKey);
 				targ->setTimeFormat(v8str.operator *(),v8str.length());
@@ -748,6 +791,11 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 			if(jsKey->IsString()) {
 				v8::String::Utf8Value v8str(jsKey);
 				targ->setOriginFormat(v8str.operator *(),v8str.length());
+			}
+			jsKey = jsObj->Get(String::New("post"));
+			if(jsKey->IsString()) {
+				v8::String::Utf8Value v8str(jsKey);
+				targ->setPostFormat(v8str.operator *(),v8str.length());
 			}
 		}
 
@@ -837,25 +885,40 @@ Handle<Value> GreaseLogger::Flush(const Arguments& args) {
 int GreaseLogger::_log(FilterList *list, const logMeta &meta, const char *s, int len) { // internal log cmd
 //	HEAVY_DBG_OUT("out len: %d\n",len);
 //	DBG_OUT("meta.level %x",meta.level);
-	if(len > GREASE_MAX_MESSAGE_SIZE)
-		return GREASE_OVERFLOW;
-	if(!list) {
-		defaultTarget->write(s,len,meta);
-	} else if (list->valid(meta.level)) {
-		int n = 0;
-		while(list->list[n].id != 0) {
-			logTarget *t = NULL;
-			if((list->list[n].levelMask & meta.level) && targets.find(list->list[n].targetId, t)) {
-				t->write(s,len,meta);
-			} else {
-				ERROR_OUT("Orphaned target id: %d\n",list->list[n].targetId);
-			}
-			n++;
-		}
-	} else {  // write out to default target if the list does not apply to this level
-//		HEAVY_DBG_OUT("pass thru to default");
-		defaultTarget->write(s,len,meta);
+//	if(len > GREASE_MAX_MESSAGE_SIZE)
+//		return GREASE_OVERFLOW;
+
+	singleLog *l = NULL;
+	if(masterBufferAvail.remove(l)) {
+		internalCmdReq req(NEW_LOG);
+		l->buf.memcpy(s,len);
+		l->m = meta;
+		req.aux = l;
+		if(internalCmdQueue.addMvIfRoom(req))
+			uv_async_send(&asyncInternalCommand);
+		else
+			ERROR_OUT("internalCmdQueue is out of space!! Dropping. \n");
+	} else {
+		ERROR_OUT("masterBuffer is out of space!! Dropping. (%d)\n", masterBufferAvail.remaining());
 	}
+
+
+//	if(!list) {
+//		defaultTarget->write(s,len,meta);
+//	} else if (list->valid(meta.level)) {
+//		int n = 0;
+//		while(list->list[n].id != 0) {
+//			logTarget *t = NULL;
+//			if((list->list[n].levelMask & meta.level) && targets.find(list->list[n].targetId, t)) {
+//				t->write(s,len,meta);
+//			} else {
+//				ERROR_OUT("Orphaned target id: %d\n",list->list[n].targetId);
+//			}
+//			n++;
+//		}
+//	} else {  // write out to default target if the list does not apply to this level
+//		defaultTarget->write(s,len,meta);
+//	}
 	return GREASE_OK;
 }
 
