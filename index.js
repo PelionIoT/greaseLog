@@ -21,7 +21,6 @@ try {
 		console.error("Error in nativelib [debug]: " + e + " --> " + e.stack);
 }
 
-
 var _logger = {};
 
 var natives = Object.keys(nativelib);
@@ -171,7 +170,9 @@ var setup = function(levels) {
 		return instance.addFilter(obj);
 	}
 
-
+	this.createPTS = function(err,cb) {
+		instance.createPTS(err,cb);
+	}
 
 }
 

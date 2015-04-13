@@ -12,8 +12,6 @@ var fillInDefaults = function(target) {
 
 module.exports = (function() {
 
-
-
 	// default config
 	var _config = {
 		format : "{{timestamp}} <{{title}}> {{subdir}}{{file}}:{{line}} ({{method}}) {{message}}",

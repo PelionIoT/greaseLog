@@ -46,23 +46,27 @@ var N = 0;
 // 		logger.error("************ LAST **********");
 // 	});
 
+var testCallback = function(str,id) {
+	console.log("CB (" + id + ")>" + str + "<");
+}
+
+var fd = null;
+
+logger.createPTS(function(err,pty){
+	if(err) {
+		console.error("Error creating PTS: " + util.inspect(err));
+	} else {
+
+		fd = pty.fd;
+		console.log("PTY: " + pty.path);
+
+	}
+});
+
 logger.addTarget({
-	    file: "rotateThis.log",
-	    delim: "\n",
-	    format: {
-	    	pre: '\x1B[1m', // pre: "pre>"   // 'bold' escape sequence
-	    	time: "[%ld:%d] ",
-	    	level: "<%s> ",
-	    	tag: "{%s} ",
-	    	origin: "(%s) ",
-	    	post: "\x1B[22m" // post: "<post"
-	    },
-	    rotate: {
-	    	max_files: 5,
-	    	max_file_size:  10000,
-	    	max_total_size: 100000
-	    	,rotate_on_start: true
-	    }
+	    tty: fd,
+	    callback: testCallback,
+	    delim: '\n' // separate each entry with a hard return
 	},function(targetid,err){
 		if(err) {
 			console.log("error: "+ util.inspect(err));
@@ -75,22 +79,20 @@ logger.addTarget({
 				// mask: logger.LEVELS.ALL
 			});
 		}		
-
-		var N = 10000;
+		var N = 1000;
 		logger.debug('rotate',"************ FIRST **********");
-		var i =	setInterval(function(){
-			N = N - 200;
-			for(var n=0;n<200;n++)
-				logger.debug('rotate',"....rotate me ["+(N-n+200)+"]....");
-			if(N == 0) {
-				logger.debug('rotate',"************ LAST **********");
-				clearInterval(i);
+		var I = setInterval(function(){
+			for(var n=0;n<10;n++) {
+				logger.debug('rotate',"....rotate me ["+N+"]....");
+				N--;
 			}
-		},100);
+			if(N == 0) {
+				clearInterval(I);
+				logger.debug('rotate',"************ LAST **********");	
+//				setTimeout(function(){},2000);
+			}
+		},500);
 
-		// for(var n=0;n<200000;n++) {
-		// 	logger.debug('rotate',"....rotate me....");
-		// }
 
 	});
 

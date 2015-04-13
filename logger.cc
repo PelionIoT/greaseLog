@@ -456,6 +456,54 @@ void GreaseLogger::callTargetCallback(uv_async_t *h, int status ) {
 	}
 }
 
+Handle<Value> GreaseLogger::createPTS(const Arguments& args) {
+	HandleScope scope;
+
+	GreaseLogger *l = GreaseLogger::setupClass();
+	Local<Function> cb;
+
+	if(args.Length() < 1 || !args[0]->IsFunction()) {
+		return ThrowException(Exception::TypeError(String::New("createPTS: bad parameters")));
+	} else {
+		cb = Local<Function>::Cast(args[0]);
+	}
+
+	char *slavename = NULL;
+	const unsigned argc = 2;
+	Local<Value> argv[argc];
+
+	_errcmn::err_ev err;
+
+	int fdm = open("/dev/ptmx", O_RDWR);  // open master
+
+	if(fdm < 0) {
+		err.setError(errno);
+	} else {
+		if(grantpt(fdm) != 0) {  // change permission of slave
+			err.setError(errno);
+		} else {
+			if(unlockpt(fdm) != 0) {                     // unlock slave
+				err.setError(errno);
+			}
+			slavename = ptsname(fdm);      	   // get name of slave
+		}
+	}
+
+	if(err.hasErr() || !slavename) {
+		argv[0] = _errcmn::err_ev_to_JS(err, "Error in creating pseudo-terminal: ")->ToObject();
+		cb->Call(Context::GetCurrent()->Global(),1,argv);
+	} else {
+		argv[0] = v8::Local<v8::Value>::New(v8::Null());
+
+		Local<Object> obj = Object::New();
+		obj->Set(String::New("fd"),Int32::New(fdm));
+		obj->Set(String::New("path"),String::New(slavename,strlen(slavename)));
+		argv[1] = obj;
+		cb->Call(Context::GetCurrent()->Global(),2,argv);
+	}
+
+	return scope.Close(Undefined());
+}
 
 
 
@@ -694,6 +742,14 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 			if(args.Length() > 0 && args[1]->IsFunction())
 				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
 			targ = new ttyTarget(buffsize, id, l, targetReady,  std::move(delims), i, v8str.operator *());
+		} else if (isTty->IsInt32()) {
+			target_start_info *i = new target_start_info();
+//			i->system_start_info = data;
+			i->cb = start_target_cb;
+			i->targId = id;
+			if(args.Length() > 0 && args[1]->IsFunction())
+				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
+			targ = ttyTarget::makeTTYTargetFromFD(isTty->ToInt32()->Value(), buffsize, id, l, targetReady,  std::move(delims), i);
 		} else if (isFile->IsString()) {
 			Local<Value> jsMode = jsTarg->Get(String::New("mode"));
 			Local<Value> jsFlags = jsTarg->Get(String::New("flags"));
@@ -966,6 +1022,8 @@ void GreaseLogger::Init() {
 	tpl->InstanceTemplate()->Set(String::NewSymbol("logSync"), FunctionTemplate::New(LogSync)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("log"), FunctionTemplate::New(Log)->GetFunction());
 
+	tpl->InstanceTemplate()->Set(String::NewSymbol("createPTS"), FunctionTemplate::New(createPTS)->GetFunction());
+
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addTagLabel"), FunctionTemplate::New(AddTagLabel)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addOriginLabel"), FunctionTemplate::New(AddOriginLabel)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addLevelLabel"), FunctionTemplate::New(AddLevelLabel)->GetFunction());
@@ -976,7 +1034,6 @@ void GreaseLogger::Init() {
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addSink"), FunctionTemplate::New(AddSink)->GetFunction());
 
 //	tpl->InstanceTemplate()->SetAccessor(String::New("lastErrorStr"), GetLastErrorStr, SetLastErrorStr);
-
 //	tpl->InstanceTemplate()->SetAccessor(String::New("_readChunkSize"), GetReadChunkSize, SetReadChunkSize);
 
 	GreaseLogger::constructor = Persistent<Function>::New(tpl->GetFunction());

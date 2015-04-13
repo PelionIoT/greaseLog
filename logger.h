@@ -1240,6 +1240,46 @@ protected:
 			}
 
 		}
+
+	protected:
+		// make a TTY from an existing file descriptor
+		ttyTarget(int fd, int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, delim_data _delim, target_start_info *readydata = NULL)
+		   : logTarget(buffer_size, id, o, cb, std::move(_delim), readydata), ttyFD(0)  {
+//			outReq.cb = write_cb;
+			_errcmn::err_ev err;
+//			if(ttypath)
+//				ttyFD = ::open(ttypath, O_WRONLY, 0);
+//			else
+//				ttyFD = ::open("/dev/tty", O_WRONLY, 0);
+			ttyFD = fd;
+
+			if(ttyFD >= 0) {
+				tty.loop = o->loggerLoop;
+				int r = uv_tty_init(o->loggerLoop, &tty, ttyFD, READABLE);
+
+				if (r) ERROR_UV("initing tty", r, o->loggerLoop);
+
+				// enable TYY formatting, flow-control, etc.
+//				r = uv_tty_set_mode(&tty, TTY_NORMAL);
+//				DBG_OUT("r = %d\n",r);
+//				if (r) ERROR_UV("setting tty mode", r, o->loggerLoop);
+
+				if(!r)
+					readyCB(true,err,this);
+				else {
+					err.setError(r);
+					readyCB(false,err, this);
+				}
+			} else {
+				err.setError(errno,"Failed to open TTY");
+				readyCB(false,err, this);
+			}
+
+		}
+	public:
+		static ttyTarget *makeTTYTargetFromFD(int fd, int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, delim_data _delim, target_start_info *readydata = NULL) {
+			return new  ttyTarget( fd, buffer_size, id, o, cb,  std::move(_delim), readydata );
+		}
 	};
 
 
@@ -1775,6 +1815,9 @@ public:
 
     static Handle<Value> Start(const Arguments& args);
 
+    // creates a new pseduo-terminal for use with TTY targets
+    static Handle<Value> createPTS(const Arguments& args);
+
 
     static Handle<Value> Log(const Arguments& args);
     static Handle<Value> LogSync(const Arguments& args);
@@ -1804,21 +1847,17 @@ protected:
 	static void _doV8Callback(GreaseLogger::logTarget::writeCBData &data); // <--- only call this one from v8 thread!
 	static void start_target_cb(GreaseLogger *l, _errcmn::err_ev &err, void *d);
 	static void start_logger_cb(GreaseLogger *l, _errcmn::err_ev &err, void *d);
-// int buffer_size = DEFAULT_BUFFER_SIZE, int chunk_size = LOGGER_DEFAULT_CHUNK_SIZE
     GreaseLogger(int buffer_size = DEFAULT_BUFFER_SIZE, int chunk_size = LOGGER_DEFAULT_CHUNK_SIZE) :
     	nextFilterId(1), nextTargetId(1),
     	bufferSize(buffer_size), chunkSize(chunk_size),
     	masterBufferAvail(PRIMARY_BUFFER_ENTRIES),
-//    	masterBufferWriteout(PRIMARY_BUFFER_ENTRIES),
     	targetCallbackQueue(MAX_TARGET_CALLBACK_STACK, true),
     	err(),
-//    	showNoLevel(true), showNoTag(true), showNoOrigin(true),
     	internalCmdQueue( INTERNAL_QUEUE_SIZE, true ),
     	nodeCmdQueue( COMMAND_QUEUE_NODE_SIZE, true ),
     	v8LogCallbacks( V8_LOG_CALLBACK_QUEUE_SIZE, true ),
     	levelFilterOutMask(0), // tagFilter(), originFilter(),
     	defaultFilterOut(false),
-//    	filterTable(),
     	filterHashTable(),
     	defaultTarget(NULL),
     	targets(),
@@ -1855,10 +1894,6 @@ protected:
     	while(masterBufferAvail.remove(l)) {
     		delete l;
     	}
-//    	while(masterBufferWriteout.remove(l)) {
-//    		delete l;
-//    	}
-
     }
 
 public:
