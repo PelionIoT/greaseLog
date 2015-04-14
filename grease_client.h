@@ -52,6 +52,8 @@ typedef struct logMeta_t {   // meta data for each log entry
 	uint32_t level;  // 0 means no level
 	int32_t origin; // 0 means no origin
 	uint32_t target; // 0 means default target
+	// internal
+	FilterHash _cached_hash; // used internally - so we don't compute this so many times
 } logMeta;
 
 #define GREASE_OVERFLOW 4

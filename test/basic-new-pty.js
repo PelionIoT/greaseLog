@@ -66,7 +66,15 @@ logger.createPTS(function(err,pty){
 logger.addTarget({
 	    tty: fd,
 	    callback: testCallback,
-	    delim: '\n' // separate each entry with a hard return
+	    delim: '\n', // separate each entry with a hard return
+	    format: {
+	    	pre: 'targ-pre>', // pre: "pre>"   // 'bold' escape sequence
+	    	time: "[%ld:%d] ",
+	    	level: "<%s> ",
+	    	tag: "{%s} ",
+	    	origin: "(%s) ",
+	    	post: "<targ-post" // post: "<post"
+	    },
 	},function(targetid,err){
 		if(err) {
 			console.log("error: "+ util.inspect(err));
@@ -74,9 +82,10 @@ logger.addTarget({
 			console.log("added rotate target: " + targetid);
 			var ret = logger.addFilter({ 
 				target: targetid,
-				tag: 'rotate'
-				// ,
-				// mask: logger.LEVELS.ALL
+				tag: 'rotate',
+				mask: logger.LEVELS.DEBUG,
+				pre: "pre(debug)>",
+				post: "<post(debug)"
 			});
 		}		
 		var N = 1000;

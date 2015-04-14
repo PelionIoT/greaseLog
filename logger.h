@@ -257,6 +257,17 @@ public:
 		~heapBuf() {
 			if(handle.base) LFREE(handle.base);
 		}
+		// I find it too confusing to having multiple overloaded '=' operators - so we have this
+		void assign(heapBuf &o) {
+			returnBuf();
+			if(handle.base) LFREE(handle.base);
+			handle.base = NULL;
+			if(o.handle.base && o.handle.len > 0) {
+				handle.base = (char *) LMALLOC(o.handle.len);
+				handle.len = o.handle.len;
+				::memcpy(handle.base,o.handle.base,handle.len);
+			}
+		}
 		heapBuf& operator=(heapBuf&& o) {
 			used = o.used; o.used =0;
 			handle = o.handle;
@@ -293,11 +304,14 @@ public:
 			return buf.handle.len;
 		}
 		logLabel() : buf() {}
-
+		bool empty() { return buf.empty(); }
 		void setUTF8(const char *s, int len) {
 			buf.malloc(len+1);
 			memset(buf.handle.base,0,(size_t) len+1);
 			buf.memcpy(s,(size_t) len);
+		}
+		logLabel& operator=(logLabel &o) {
+			buf.assign(o.buf);
 		}
 		/**
 		 * Creates a log label from a utf8 string with specific len. The normal cstor
@@ -415,18 +429,22 @@ protected:
 		FilterId id;
 		LevelMask levelMask;
 		TargetId targetId;
-		Filter() {
+		logLabel preFormat;
+		logLabel postFormat;
+		Filter() : preFormat(), postFormat() {
 			id = 0;  // an ID of 0 means - empty Filter
 			levelMask = 0;
 			targetId = 0;
 		};
-		Filter(FilterId id, LevelMask mask, TargetId t) : id(id), levelMask(mask), targetId(t) {}
+		Filter(FilterId id, LevelMask mask, TargetId t) : id(id), levelMask(mask), targetId(t), preFormat(), postFormat() {}
 //		Filter(Filter &&o) : id(o.id), levelMask(o.mask), targetId(o.t) {};
 		Filter(Filter &o) :  id(o.id), levelMask(o.levelMask), targetId(o.targetId) {};
 		Filter& operator=(Filter& o) {
 			id = o.id;
 			levelMask = o.levelMask;
 			targetId = o.targetId;
+			preFormat = o.preFormat;
+			postFormat = o.postFormat;
 			return *this;
 		}
 	};
@@ -885,11 +903,15 @@ protected:
 			postFormat.setUTF8(s,len);
 		}
 
-		size_t putsHeader(char *mem, size_t remain, const logMeta &m) {
+		size_t putsHeader(char *mem, size_t remain, const logMeta &m, Filter *filter) {
 			static __thread struct timeb _timeb;
 			size_t space = remain;
 			logLabel *label;
 			int n = 0;
+			if(!filter->preFormat.empty()) {
+				n = snprintf(mem + (remain-space),space,filter->preFormat.buf.handle.base);
+				space = space - n;
+			}
 			if(preFormat.length() > 0 && space > 0) {
 				n = snprintf(mem + (remain-space),space,preFormat.buf.handle.base);
 				space = space - n;
@@ -922,10 +944,14 @@ protected:
 			return remain-space;
 		}
 
-		size_t putsFooter(char *mem, size_t remain) {
+		size_t putsFooter(char *mem, size_t remain, Filter *filter) {
 			size_t space = remain;
 			logLabel *label;
 			int n = 0;
+			if(!filter->postFormat.empty()) {
+				n = snprintf(mem,space,filter->postFormat.buf.handle.base);
+				space = space - n;
+			}
 			if(postFormat.length() > 0 && space > 0) {
 				n = snprintf(mem,space,postFormat.buf.handle.base);
 				space = space - n;
@@ -1012,7 +1038,7 @@ protected:
 			return ret;
 		}
 
-		void write(const char *s, uint32_t len, const logMeta &m) {  // called from node thread...
+		void write(const char *s, uint32_t len, const logMeta &m, Filter *filter) {  // called from node thread...
 			static __thread char header_buffer[GREASE_MAX_PREFIX_HEADER]; // used to make header of log line. for speed it's static. this is __thread
 			                                                              // so when it is called from multiple threads buffers don't conflict
 			                                                              // for a discussion of thread_local (a C++ 11 thing) and __thread (a gcc thing)
@@ -1035,8 +1061,8 @@ protected:
 				return;
 			}
 
-			len_header_buffer = putsHeader(header_buffer,(size_t) GREASE_MAX_PREFIX_HEADER,m);
-			len_footer_buffer = putsFooter(footer_buffer,(size_t) GREASE_MAX_PREFIX_HEADER-len_header_buffer);
+			len_header_buffer = putsHeader(header_buffer,(size_t) GREASE_MAX_PREFIX_HEADER,m,filter);
+			len_footer_buffer = putsFooter(footer_buffer,(size_t) GREASE_MAX_PREFIX_HEADER-len_header_buffer,filter);
 			bool no_footer = true;
 			if(len_footer_buffer > 0) no_footer = false;
 
@@ -1708,11 +1734,9 @@ protected:
 	typedef TWlib::TW_KHash_32<uint32_t, Sink *, TWlib::TW_Mutex, uint32_t_eqstrP, TWlib::Allocator<LoggerAlloc> > SinkTable;
 
 
-
-
 	FilterHashTable filterHashTable;  // look Filters by tag:origin
 
-	bool sift(const logMeta &f, FilterList *&list); // returns true, then the logger should log it	TWlib::TW_KHash_32<uint16_t, int, TWlib::TW_Mutex, uint16_t_eqstrP, TWlib::Allocator<TWlib::Alloc_Std>  > magicNumTable;
+	bool sift(logMeta &f, FilterList *&list, FilterHash *hash = nullptr); // returns true, then the logger should log it	TWlib::TW_KHash_32<uint16_t, int, TWlib::TW_Mutex, uint16_t_eqstrP, TWlib::Allocator<TWlib::Alloc_Std>  > magicNumTable;
 	uint32_t levelFilterOutMask;  // mandatory - all log messages have a level. If the bit is 1, the level will be logged.
 
 	bool defaultFilterOut;
@@ -1730,6 +1754,7 @@ protected:
 	}
 
 	logTarget *defaultTarget;
+	Filter defaultFilter;
 	TargetTable targets;
 	SinkTable sinks;
 
@@ -1753,7 +1778,8 @@ protected:
 		return (uint64_t) (((uint64_t) UINT64_C(0xFFFFFFFF00000000) & ((uint64_t) origin << 32)) | tag);
 	}
 
-	bool _addFilter(TargetId t, OriginId origin, TagId tag, LevelMask level, FilterId &id) {
+	bool _addFilter(TargetId t, OriginId origin, TagId tag, LevelMask level, FilterId &id,
+			logLabel *preformat = nullptr, logLabel *postformat = nullptr) {
 		uint64_t hash = filterhash(tag,origin);
 		bool ret = false;
 		uv_mutex_lock(&nextIdMutex);
@@ -1768,6 +1794,10 @@ protected:
 			filterHashTable.addNoreplace(hash, list);
 		}
 		Filter f(id,level,t);
+		if(preformat && !preformat->empty())
+			f.preFormat = *preformat;
+		if(postformat && !postformat->empty())
+			f.postFormat = *postformat;
 		DBG_OUT("new Filter(%x,%x,%x) to list [hash] %llu", id,level,t, hash);
 		// TODO add to list
 		ret = list->add(f);
@@ -1778,15 +1808,10 @@ protected:
 		return ret;
 	}
 
-
-
-
 	uv_loop_t *loggerLoop;  // grease uses its own libuv event loop (not node's)
 
 	int _log(FilterList *list, const logMeta &meta, const char *s, int len); // internal log cmd
 	int _logSync(FilterList *list, const logMeta &meta, const char *s, int len); // internal log cmd
-
-
 
 	void start(actionCB cb, target_start_info *data);
 	int logFromRaw(char *base, int len);
@@ -1860,6 +1885,7 @@ protected:
     	defaultFilterOut(false),
     	filterHashTable(),
     	defaultTarget(NULL),
+    	defaultFilter(),
     	targets(),
     	sinks(),
     	tagLabels(), originLabels(), levelLabels(),

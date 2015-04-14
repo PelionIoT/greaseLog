@@ -24,13 +24,18 @@ using namespace Grease;
 
 Persistent<Function> GreaseLogger::constructor;
 
-bool GreaseLogger::sift(const logMeta &f, FilterList *&list) { // returns true, then the logger should log it
+bool GreaseLogger::sift(logMeta &f, FilterList *&list, FilterHash *hashcopy) { // returns true, then the logger should log it
 	bool ret = true;
 
 	if(levelFilterOutMask & f.level)
 		ret = false;
 
-	FilterHash hash = filterhash(f.tag,f.origin);
+	FilterHash hash = 0;
+	if(hashcopy) hash = *hashcopy;
+	else {  // else cache the hash value
+		hash = filterhash(f.tag,f.origin);
+		f._cached_hash = hash;
+	}
 
 	uv_mutex_lock(&modifyFilters);
 	if(ret && !filterHashTable.find(hash,list)) {
@@ -55,16 +60,16 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
     			singleLog *l = (singleLog *) req.aux;
     			assert(l);
     			FilterList *list = NULL;
-    			if(GreaseLogger::LOGGER->sift(l->m, list)) { // should always be true (checked in v8 thread)
+    			if(GreaseLogger::LOGGER->sift(l->m, list, &l->m._cached_hash)) { // should always be true (checked in v8 thread)
         			if(!list) {
-        				GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,l->buf.used,l->m);
+        				GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,l->buf.used,l->m,&GreaseLogger::LOGGER->defaultFilter);
         			} else if (list->valid(l->m.level)) {
         				int n = 0;
         				while(list->list[n].id != 0) {
         					logTarget *t = NULL;
         					if((list->list[n].levelMask & l->m.level) && GreaseLogger::LOGGER->targets.find(list->list[n].targetId, t)) {
 //        						DBG_OUT("write out: %s",l->buf.handle.base);
-        						t->write(l->buf.handle.base,(uint32_t) l->buf.used,l->m);
+        						t->write(l->buf.handle.base,(uint32_t) l->buf.used,l->m, &list->list[n]);
         					} else {
         						ERROR_OUT("Orphaned target id: %d\n",list->list[n].targetId);
         					}
@@ -72,7 +77,7 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
         				}
         			} else {  // write out to default target if the list does not apply to this level
         		//		HEAVY_DBG_OUT("pass thru to default");
-        				GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,(uint32_t)l->buf.used,l->m);
+        				GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,(uint32_t)l->buf.used,l->m,&GreaseLogger::LOGGER->defaultFilter);
         			}
     			}
     			l->clear();
@@ -177,8 +182,9 @@ int GreaseLogger::log(const logMeta &f, const char *s, int len) { // does the wo
 	FilterList *list = NULL;
 	if(len > GREASE_MAX_MESSAGE_SIZE)
 		return GREASE_OVERFLOW;
-	if(sift(f,list)) {
-		return _log(list,f,s,len);
+	logMeta m = f;
+	if(sift(m,list)) {
+		return _log(list,m,s,len);
 	} else
 		return GREASE_OK;
 }
@@ -241,7 +247,8 @@ int GreaseLogger::logFromRaw(char *base, int len) {
 
 int GreaseLogger::logSync(const logMeta &f, const char *s, int len) { // does the work of logging. now. will empty any buffers first.
 	FilterList *list = NULL;
-	if(sift(f,list)) {
+	logMeta m = f;
+	if(sift(m,list)) {
 		return _logSync(list,f,s,len);
 	} else
 		return GREASE_OK;
@@ -622,11 +629,25 @@ Handle<Value> GreaseLogger::AddFilter(const Arguments& args) {
 		} else {
 			ok = false;
 		}
+
 		if(!ok) {
 			return ThrowException(Exception::TypeError(String::New("addFilter: bad parameters")));
 		}
 
-		if(l->_addFilter(targetId,originId,tagId,mask,id))
+		logLabel *preFormat = NULL;
+		logLabel *postFormat = NULL;
+		Local<Value> jsKey = jsObj->Get(String::New("pre"));
+		if(jsKey->IsString()) {
+			v8::String::Utf8Value v8str(jsKey);
+			preFormat = logLabel::fromUTF8(v8str.operator *(),v8str.length());
+		}
+		jsKey = jsObj->Get(String::New("post"));
+		if(jsKey->IsString()) {
+			v8::String::Utf8Value v8str(jsKey);
+			postFormat= logLabel::fromUTF8(v8str.operator *(),v8str.length());
+		}
+
+		if(l->_addFilter(targetId,originId,tagId,mask,id,preFormat,postFormat))
 			ret = Integer::NewFromUnsigned(id);
 		else
 			ret = Boolean::New(false);
