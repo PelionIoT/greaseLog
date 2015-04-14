@@ -71,7 +71,8 @@ var setup = function(levels) {
 		'debug2'   : 0x10,
 		'debug3'   : 0x20,
 		'user1'    : 0x40,
-		'user2'    : 0x80  // Levels can use the rest of the bits too...
+		'user2'    : 0x80,  // Levels can use the rest of the bits too...
+		'success'  : 0x100
 	};
 
 	if(!levels) levels = LEVELS_default;

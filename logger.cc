@@ -71,7 +71,7 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
 //        						DBG_OUT("write out: %s",l->buf.handle.base);
         						t->write(l->buf.handle.base,(uint32_t) l->buf.used,l->m, &list->list[n]);
         					} else {
-        						ERROR_OUT("Orphaned target id: %d\n",list->list[n].targetId);
+//        						DBG_OUT("Orphaned target id: %d\n",list->list[n].targetId);
         					}
         					n++;
         				}
