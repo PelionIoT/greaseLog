@@ -386,10 +386,47 @@ public:
 		}
 	};
 
+	struct Opts_t {
+		uv_mutex_t mutex;
+		bool show_errors;
+		bool callback_errors;
+		int bufferSize;  // size of each buffer
+		int chunkSize;
+		uint32_t levelFilterOutMask;
+		bool defaultFilterOut;
+		Opts_t() : show_errors(false), callback_errors(false), levelFilterOutMask(0), defaultFilterOut(false) {
+			uv_mutex_init(&mutex);
+		}
+
+		void lock() {
+			uv_mutex_lock(&mutex);
+		}
+
+		void unlock() {
+			uv_mutex_unlock(&mutex);
+		}
+//		bool get_show_errors() {
+//			bool ret = false;
+//			lock();
+//			ret = show_errors;
+//			unlock();
+//			return ret;
+//		}
+//		bool get_callback_errors() {
+//			bool ret = false;
+//			lock();
+//			ret = callback_errors;
+//			unlock();
+//			return ret;
+//		}
+	};
+	Opts_t Opts;
+
+
 protected:
 	static GreaseLogger *LOGGER;  // this class is a Singleton
-	int bufferSize;  // size of each buffer
-	int chunkSize;
+//	int bufferSize;  // size of each buffer
+//	int chunkSize;
 	// these are the primary buffers for all log messages. Logs are put here before targets are found,
 	// or anything else happens (other than sift())
 	TWlib::tw_safeCircular<singleLog  *, LoggerAlloc > masterBufferAvail;    // <-- available buffers (starts out full)
@@ -857,6 +894,8 @@ protected:
 		bool logCallbackSet; // if true, logCallback (below) is set (we prefer to not touch any v8 stuff, when outside the v8 thread)
 		Persistent<Function>  logCallback;
 		delim_data delim;
+
+
 		// Queue flow:
 		// 1) un-used logBuf taken out of availBuffers, filled with data
 		// 2) placed in writeOutBuffers for write out
@@ -991,7 +1030,8 @@ protected:
 			if(!nocallback && logCallbackSet && b->handle.len > 0) {
 				writeCBData cbdat(this,b);
 				if(!owner->v8LogCallbacks.addMvIfRoom(cbdat)) {
-					ERROR_OUT(" !!! v8LogCallbacks is full! Can't rotate. Callback will be skipped.");
+					if(owner->Opts.show_errors)
+						ERROR_OUT(" !!! v8LogCallbacks is full! Can't rotate. Callback will be skipped.");
 				}
 				if(!sync)
 					uv_async_send(&owner->asyncV8LogCallback);
@@ -1023,14 +1063,17 @@ protected:
 					if(ret) {
 						currentBuffer = next;
 					} else {
-						ERROR_OUT(" !!! writeOutBuffers is full! Can't rotate. Data will be lost.");
+						if(owner->Opts.show_errors)
+							ERROR_OUT(" !!! writeOutBuffers is full! Can't rotate. Data will be lost.");
 						if(!availBuffers.addIfRoom(next)) {  // won't block
-							ERROR_OUT(" !!!!!!!! CRITICAL - can't put Buffer back in availBuffers. Losing Buffer ?!@?!#!@");
+							if(owner->Opts.show_errors)
+								ERROR_OUT(" !!!!!!!! CRITICAL - can't put Buffer back in availBuffers. Losing Buffer ?!@?!#!@");
 						}
 						currentBuffer->clear();
 					}
 				} else {
-					ERROR_OUT(" !!! Can't rotate. NO BUFFERS - Overwriting buffer!! Data will be lost. [target %d]", myId);
+					if(owner->Opts.show_errors)
+						ERROR_OUT(" !!! Can't rotate. NO BUFFERS - Overwriting buffer!! Data will be lost. [target %d]", myId);
 					currentBuffer->clear();
 				}
 			} else {
@@ -1060,7 +1103,8 @@ protected:
 				if(owner->internalCmdQueue.addMvIfRoom(req))
 					uv_async_send(&owner->asyncInternalCommand);
 				else {
-					ERROR_OUT("Overflow. Dropping WRITE_TARGET_OVERFLOW");
+					if(owner->Opts.show_errors)
+						ERROR_OUT("Overflow. Dropping WRITE_TARGET_OVERFLOW");
 					delete B;
 				}
 				return;
@@ -1096,7 +1140,8 @@ protected:
 						DBG_OUT("Request ROTATE [%d] [target %d]", id, myId);
 						uv_async_send(&owner->asyncInternalCommand);
 					} else {
-						ERROR_OUT("Overflow. Dropping TARGET_ROTATE_BUFFER");
+						if(owner->Opts.show_errors)
+							ERROR_OUT("Overflow. Dropping TARGET_ROTATE_BUFFER");
 					}
 				}
 			}
@@ -1742,9 +1787,9 @@ protected:
 	FilterHashTable filterHashTable;  // look Filters by tag:origin
 
 	bool sift(logMeta &f); // returns true, then the logger should log it	TWlib::TW_KHash_32<uint16_t, int, TWlib::TW_Mutex, uint16_t_eqstrP, TWlib::Allocator<TWlib::Alloc_Std>  > magicNumTable;
-	uint32_t levelFilterOutMask;  // mandatory - all log messages have a level. If the bit is 1, the level will be logged.
-
-	bool defaultFilterOut;
+//	uint32_t levelFilterOutMask;  // mandatory - all log messages have a level. If the bit is 1, the level will be logged.
+//
+//	bool defaultFilterOut;
 
 
 	// http://stackoverflow.com/questions/1277627/overhead-of-pthread-mutexes
@@ -1887,15 +1932,16 @@ protected:
 	static void start_logger_cb(GreaseLogger *l, _errcmn::err_ev &err, void *d);
     GreaseLogger(int buffer_size = DEFAULT_BUFFER_SIZE, int chunk_size = LOGGER_DEFAULT_CHUNK_SIZE) :
     	nextFilterId(1), nextTargetId(1),
-    	bufferSize(buffer_size), chunkSize(chunk_size),
+    	Opts(),
+//    	bufferSize(buffer_size), chunkSize(chunk_size),
     	masterBufferAvail(PRIMARY_BUFFER_ENTRIES),
     	targetCallbackQueue(MAX_TARGET_CALLBACK_STACK, true),
     	err(),
     	internalCmdQueue( INTERNAL_QUEUE_SIZE, true ),
     	nodeCmdQueue( COMMAND_QUEUE_NODE_SIZE, true ),
     	v8LogCallbacks( V8_LOG_CALLBACK_QUEUE_SIZE, true ),
-    	levelFilterOutMask(0), // tagFilter(), originFilter(),
-    	defaultFilterOut(false),
+//    	levelFilterOutMask(0), // moved to Opts ... tagFilter(), originFilter(),
+//    	defaultFilterOut(false),
     	filterHashTable(),
     	defaultTarget(NULL),
     	defaultFilter(),
@@ -1906,6 +1952,8 @@ protected:
     	{
     	    LOGGER = this;
     	    loggerLoop = uv_loop_new();    // we use our *own* event loop (not the node/io.js one)
+    	    Opts.bufferSize = buffer_size;
+    	    Opts.chunkSize = chunk_size;
     	    uv_async_init(uv_default_loop(), &asyncTargetCallback, callTargetCallback);
     	    uv_async_init(uv_default_loop(), &asyncV8LogCallback, callV8LogCallbacks);
     	    uv_unref((uv_handle_t *)&asyncV8LogCallback);

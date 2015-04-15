@@ -55,6 +55,7 @@ var fd = null;
 logger.setGlobalOpts({
 //	levelFilterOutMask: logger.LEVELS.debug, // will block all debug messages, regardless of filters / targets /etc
 //	defaultFilterOut: true
+	show_errors: true
 });
 
 logger.createPTS(function(err,pty){

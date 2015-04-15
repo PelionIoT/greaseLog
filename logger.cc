@@ -39,15 +39,26 @@ Handle<Value> GreaseLogger::SetGlobalOpts(const Arguments& args) {
 	Local<Value> jsVal = jsObj->Get(String::New("levelFilterOutMask"));
 
 	if(jsVal->Uint32Value()) {
-		l->levelFilterOutMask = jsVal->Uint32Value();
+		l->Opts.levelFilterOutMask = jsVal->Uint32Value();
 	}
 
 	jsVal = jsObj->Get(String::New("defaultFilterOut"));
 	if(jsVal->IsBoolean()) {
 		bool v = jsVal->ToBoolean()->BooleanValue();
 		uv_mutex_lock(&l->modifyFilters);
-		l->defaultFilterOut = v;
+		l->Opts.defaultFilterOut = v;
 		uv_mutex_unlock(&l->modifyFilters);
+	}
+
+	jsVal = jsObj->Get(String::New("show_errors"));
+	if(jsVal->IsBoolean()) {
+		bool v = jsVal->ToBoolean()->BooleanValue();
+		l->Opts.show_errors = v;
+	}
+	jsVal = jsObj->Get(String::New("callback_errors"));
+	if(jsVal->IsBoolean()) {
+		bool v = jsVal->ToBoolean()->BooleanValue();
+		l->Opts.callback_errors = v;
 	}
 
 
@@ -58,7 +69,7 @@ Handle<Value> GreaseLogger::SetGlobalOpts(const Arguments& args) {
 bool GreaseLogger::sift(logMeta &f) { // returns true, then the logger should log it
 	bool ret = false;
 	static uint64_t zero = 0;
-	if(levelFilterOutMask & f.level)
+	if(Opts.levelFilterOutMask & f.level)
 		return false;
 
 	if(!META_HAS_CACHE(f)) {  // if the hashes aren't cached, then we have not done this...
@@ -84,7 +95,7 @@ bool GreaseLogger::sift(logMeta &f) { // returns true, then the logger should lo
 			META_SET_LIST(f,3,list);
 		}
 
-		if(!ret && defaultFilterOut)        // if neither, then do we output by default?
+		if(!ret && Opts.defaultFilterOut)        // if neither, then do we output by default?
 			ret = false;
 		else
 			ret = true;
@@ -396,7 +407,10 @@ void GreaseLogger::setupDefaultTarget(actionCB cb, target_start_info *i) {
 	delim_data defaultdelim;
 	defaultdelim.delim.sprintf("\n");
 	i->cb = cb;
-	new ttyTarget(this->bufferSize, DEFAULT_TARGET, this, targetReady,std::move(defaultdelim), i);
+	this->Opts.lock();
+	int size = this->Opts.bufferSize;
+	this->Opts.unlock();
+	new ttyTarget(size, DEFAULT_TARGET, this, targetReady,std::move(defaultdelim), i);
 //	} else {
 //		ERROR_OUT("Unsupported default output!");
 //		defaultTarget->_log_fd = GREASE_BAD_FD;
@@ -776,12 +790,16 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 		Local<Value> isTty = jsTarg->Get(String::New("tty"));
 		Local<Value> isFile = jsTarg->Get(String::New("file"));
 
-		int buffsize = l->bufferSize;
+		l->Opts.lock();
+		int buffsize = l->Opts.bufferSize;
+		l->Opts.unlock();
 		Local<Value> jsBufSize = jsTarg->Get(String::New("bufferSize"));
 		if(jsBufSize->IsInt32()) {
 			buffsize = jsBufSize->Int32Value();
 			if(buffsize < 0) {
-				buffsize = l->bufferSize;
+				l->Opts.lock();
+				buffsize = l->Opts.bufferSize;
+				l->Opts.unlock();
 			}
 		}
 
