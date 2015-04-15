@@ -24,26 +24,74 @@ using namespace Grease;
 
 Persistent<Function> GreaseLogger::constructor;
 
-bool GreaseLogger::sift(logMeta &f, FilterList *&list, FilterHash *hashcopy) { // returns true, then the logger should log it
-	bool ret = true;
+Handle<Value> GreaseLogger::SetGlobalOpts(const Arguments& args) {
+	HandleScope scope;
 
+	GreaseLogger *l = GreaseLogger::setupClass();
+	Local<Function> cb;
+
+	if(args.Length() < 1 || !args[0]->IsObject()) {
+		return ThrowException(Exception::TypeError(String::New("createPTS: bad parameters")));
+	}
+
+	Local<Object> jsObj = args[0]->ToObject();
+//	l->levelFilterOutMask
+	Local<Value> jsVal = jsObj->Get(String::New("levelFilterOutMask"));
+
+	if(jsVal->Uint32Value()) {
+		l->levelFilterOutMask = jsVal->Uint32Value();
+	}
+
+	jsVal = jsObj->Get(String::New("defaultFilterOut"));
+	if(jsVal->IsBoolean()) {
+		bool v = jsVal->ToBoolean()->BooleanValue();
+		uv_mutex_lock(&l->modifyFilters);
+		l->defaultFilterOut = v;
+		uv_mutex_unlock(&l->modifyFilters);
+	}
+
+
+	return scope.Close(Undefined());
+}
+
+
+bool GreaseLogger::sift(logMeta &f) { // returns true, then the logger should log it
+	bool ret = false;
+	static uint64_t zero = 0;
 	if(levelFilterOutMask & f.level)
-		ret = false;
+		return false;
 
-	FilterHash hash = 0;
-	if(hashcopy) hash = *hashcopy;
-	else {  // else cache the hash value
-		hash = filterhash(f.tag,f.origin);
-		f._cached_hash = hash;
-	}
+	if(!META_HAS_CACHE(f)) {  // if the hashes aren't cached, then we have not done this...
+		getHashes(f.tag,f.origin,f._cached_hash);
 
-	uv_mutex_lock(&modifyFilters);
-	if(ret && !filterHashTable.find(hash,list)) {
-		if(defaultFilterOut)
+		uv_mutex_lock(&modifyFilters);
+		FilterList *list;
+		if(filterHashTable.find(f._cached_hash[0],list)) { // check both tag and orgin
+			ret = true;
+			META_SET_LIST(f,0,list);
+		}
+		if(!ret && filterHashTable.find(f._cached_hash[1],list)) { // check just tag
+			ret = true;
+			META_SET_LIST(f,1,list);
+		}
+		if(!ret && filterHashTable.find(f._cached_hash[2],list)) { // check just origin...
+			ret = true;
+			META_SET_LIST(f,2,list);
+		}
+
+		if(!ret && filterHashTable.find(zero,list)) {
+			ret = true;
+			META_SET_LIST(f,3,list);
+		}
+
+		if(!ret && defaultFilterOut)        // if neither, then do we output by default?
 			ret = false;
-		list = NULL;
-	}
-	uv_mutex_unlock(&modifyFilters);
+		else
+			ret = true;
+
+		uv_mutex_unlock(&modifyFilters);
+	} else
+		ret = true;
 	return ret;
 }
 
@@ -59,26 +107,34 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
     			// process a single log message
     			singleLog *l = (singleLog *) req.aux;
     			assert(l);
-    			FilterList *list = NULL;
-    			if(GreaseLogger::LOGGER->sift(l->m, list, &l->m._cached_hash)) { // should always be true (checked in v8 thread)
-        			if(!list) {
+//    			FilterList *list = NULL;
+    			if(GreaseLogger::LOGGER->sift(l->m)) { // should always be true (checked in v8 thread)
+    				bool wrote = false;
+    				for(int i=0;i<4;i++) {
+    					FilterList *LIST = META_GET_LIST(l->m,i);
+    					if (LIST && LIST->valid(l->m.level)) {
+    						int n = 0;
+    						while(LIST->list[n].id != 0) {
+    							logTarget *t = NULL;
+    							if((LIST->list[n].levelMask & l->m.level) && GreaseLogger::LOGGER->targets.find(LIST->list[n].targetId, t)) {
+    					//        						DBG_OUT("write out: %s",l->buf.handle.base);
+    								t->write(l->buf.handle.base,(uint32_t) l->buf.used,l->m, &LIST->list[n]);
+    								wrote = true;
+    							} else {
+    					//        						DBG_OUT("Orphaned target id: %d\n",list->list[n].targetId);
+    							}
+    							n++;
+    						}
+    					}
+    				}
+    				if(!wrote) {
         				GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,l->buf.used,l->m,&GreaseLogger::LOGGER->defaultFilter);
-        			} else if (list->valid(l->m.level)) {
-        				int n = 0;
-        				while(list->list[n].id != 0) {
-        					logTarget *t = NULL;
-        					if((list->list[n].levelMask & l->m.level) && GreaseLogger::LOGGER->targets.find(list->list[n].targetId, t)) {
-//        						DBG_OUT("write out: %s",l->buf.handle.base);
-        						t->write(l->buf.handle.base,(uint32_t) l->buf.used,l->m, &list->list[n]);
-        					} else {
-//        						DBG_OUT("Orphaned target id: %d\n",list->list[n].targetId);
-        					}
-        					n++;
-        				}
-        			} else {  // write out to default target if the list does not apply to this level
-        		//		HEAVY_DBG_OUT("pass thru to default");
-        				GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,(uint32_t)l->buf.used,l->m,&GreaseLogger::LOGGER->defaultFilter);
         			}
+//        			}
+//        			else {  // write out to default target if the list does not apply to this level
+//        		//		HEAVY_DBG_OUT("pass thru to default");
+//        				GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,(uint32_t)l->buf.used,l->m,&GreaseLogger::LOGGER->defaultFilter);
+//        			}
     			}
     			l->clear();
     			GreaseLogger::LOGGER->masterBufferAvail.add(l); // place buffer back in queue
@@ -179,12 +235,12 @@ void GreaseLogger::mainThread(void *p) {
 }
 
 int GreaseLogger::log(const logMeta &f, const char *s, int len) { // does the work of logging
-	FilterList *list = NULL;
+//	FilterList *list = NULL;
 	if(len > GREASE_MAX_MESSAGE_SIZE)
 		return GREASE_OVERFLOW;
 	logMeta m = f;
-	if(sift(m,list)) {
-		return _log(list,m,s,len);
+	if(sift(m)) {
+		return _log(m,s,len);
 	} else
 		return GREASE_OK;
 }
@@ -248,8 +304,8 @@ int GreaseLogger::logFromRaw(char *base, int len) {
 int GreaseLogger::logSync(const logMeta &f, const char *s, int len) { // does the work of logging. now. will empty any buffers first.
 	FilterList *list = NULL;
 	logMeta m = f;
-	if(sift(m,list)) {
-		return _logSync(list,f,s,len);
+	if(sift(m)) {
+		return _logSync(f,s,len);
 	} else
 		return GREASE_OK;
 }
@@ -891,26 +947,27 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
  */
 Handle<Value> GreaseLogger::Log(const Arguments& args) {
 	static logMeta meta; // static - this call is single threaded from node.
+	ZERO_LOGMETA(meta);
 	HandleScope scope;
 	uint32_t target = DEFAULT_TARGET;
 	if(args.Length() > 1 && args[0]->IsString() && args[1]->IsInt32()){
 		GreaseLogger *l = GreaseLogger::setupClass();
 		v8::String::Utf8Value v8str(args[0]->ToString());
-		meta.level = (uint32_t) args[1]->Int32Value();
+		meta.level = (uint32_t) args[1]->Int32Value(); // level
 
 		if(args.Length() > 2 && args[2]->IsInt32()) // tag
 			meta.tag = (uint32_t) args[2]->Int32Value();
 		else
 			meta.tag = 0;
 
-		if(args.Length() > 3 && args[3]->IsInt32()) // tag
+		if(args.Length() > 3 && args[3]->IsInt32()) // origin
 			meta.origin = (uint32_t) args[3]->Int32Value();
 		else
 			meta.origin = 0;
 
 		FilterList *list = NULL;
-		if(l->sift(meta, list)) {
-			l->_log(list,meta,v8str.operator *(),v8str.length());
+		if(l->sift(meta)) {
+			l->_log(meta,v8str.operator *(),v8str.length());
 		}
 	}
 	return scope.Close(Undefined());
@@ -936,8 +993,8 @@ Handle<Value> GreaseLogger::LogSync(const Arguments& args) {
 			meta.origin = 0;
 
 		FilterList *list = NULL;
-		if(l->sift(meta, list)) {
-			l->_logSync(list,meta,v8str.operator *(),v8str.length());
+		if(l->sift(meta)) {
+			l->_logSync(meta,v8str.operator *(),v8str.length());
 		}
 	}
 	return scope.Close(Undefined());
@@ -959,7 +1016,7 @@ Handle<Value> GreaseLogger::Flush(const Arguments& args) {
 
 }
 
-int GreaseLogger::_log(FilterList *list, const logMeta &meta, const char *s, int len) { // internal log cmd
+int GreaseLogger::_log( const logMeta &meta, const char *s, int len) { // internal log cmd
 //	HEAVY_DBG_OUT("out len: %d\n",len);
 //	DBG_OUT("meta.level %x",meta.level);
 //	if(len > GREASE_MAX_MESSAGE_SIZE)
@@ -999,23 +1056,24 @@ int GreaseLogger::_log(FilterList *list, const logMeta &meta, const char *s, int
 	return GREASE_OK;
 }
 
-int GreaseLogger::_logSync(FilterList *list, const logMeta &meta, const char *s, int len) { // internal log cmd
+int GreaseLogger::_logSync( const logMeta &meta, const char *s, int len) { // internal log cmd
 	if(len > GREASE_MAX_MESSAGE_SIZE)
 		return GREASE_OVERFLOW;
-	if(!list) {
-		defaultTarget->writeSync(s,len,meta);
-	} else {
-		int n = 0;
-		while(list->list[n].id != 0) {
-			logTarget *t = NULL;
-			if(targets.find(list->list[n].targetId, t)) {
-				t->writeSync(s,len,meta);
-			} else {
-				ERROR_OUT("Orphaned target id: %d\n",list->list[n].targetId);
-			}
-			n++;
-		}
-	}
+// FIXME FIXME FIXME
+	//	if(!list) {
+//		defaultTarget->writeSync(s,len,meta);
+//	} else {
+//		int n = 0;
+//		while(list->list[n].id != 0) {
+//			logTarget *t = NULL;
+//			if(targets.find(list->list[n].targetId, t)) {
+//				t->writeSync(s,len,meta);
+//			} else {
+//				ERROR_OUT("Orphaned target id: %d\n",list->list[n].targetId);
+//			}
+//			n++;
+//		}
+//	}
 	return GREASE_OK;
 }
 
@@ -1044,6 +1102,8 @@ void GreaseLogger::Init() {
 	tpl->InstanceTemplate()->Set(String::NewSymbol("log"), FunctionTemplate::New(Log)->GetFunction());
 
 	tpl->InstanceTemplate()->Set(String::NewSymbol("createPTS"), FunctionTemplate::New(createPTS)->GetFunction());
+
+	tpl->InstanceTemplate()->Set(String::NewSymbol("setGlobalOpts"), FunctionTemplate::New(SetGlobalOpts)->GetFunction());
 
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addTagLabel"), FunctionTemplate::New(AddTagLabel)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addOriginLabel"), FunctionTemplate::New(AddOriginLabel)->GetFunction());

@@ -52,6 +52,11 @@ var testCallback = function(str,id) {
 
 var fd = null;
 
+logger.setGlobalOpts({
+//	levelFilterOutMask: logger.LEVELS.debug, // will block all debug messages, regardless of filters / targets /etc
+//	defaultFilterOut: true
+});
+
 logger.createPTS(function(err,pty){
 	if(err) {
 		console.error("Error creating PTS: " + util.inspect(err));
@@ -62,6 +67,9 @@ logger.createPTS(function(err,pty){
 
 	}
 });
+
+// logger.addTagLabel('example_tag');
+// logger.addOriginLabel('example_origin');
 
 logger.addTarget({
 	    tty: fd,
@@ -115,7 +123,7 @@ logger.addTarget({
 		logger.debug("************ FIRST **********");
 		var I = setInterval(function(){
 			for(var n=0;n<10;n++) {
-				logger.debug("....debug me ["+N+"]....");
+				logger.debug('example_tag','example_origin',"....debug me ["+N+"]....");
 				logger.warn("....warn me ["+N+"]....");	
 				logger.log("....log me ["+N+"]....");					
 				logger.error("....error me ["+N+"]....");	

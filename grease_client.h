@@ -9,6 +9,7 @@
 #define GREASE_LOG_H_
 
 #include <string.h>  // for memcmp memcpy
+#include <stdint.h>
 
 #ifndef GREASE_LOGGING
 #define GREASE_LOGGING "0.1"
@@ -53,9 +54,15 @@ typedef struct logMeta_t {   // meta data for each log entry
 	int32_t origin; // 0 means no origin
 	uint32_t target; // 0 means default target
 	// internal
-	FilterHash _cached_hash; // used internally - so we don't compute this so many times
+	FilterHash _cached_hash[3]; // used internally - so we don't compute this so many times
+	void *_cached_lists[4];
 } logMeta;
 
+extern const logMeta __noMetaData;
+
+//#define ZERO_LOGMETA(m) do { m.tag = 0; m.level = 0; m.origin = 0; m.target = 0; m._cached_hash = 0; m._cached_lists = { NULL, NULL, NULL } } while(0)
+#define ZERO_LOGMETA(m) do { m = __noMetaData; } while(0)
+#define META_HAS_CACHE(m) (m._cached_hash[0] != UINT64_C(0xFFFFFFFFFFFFFFFF))  // true if the cached hashes / list is being used
 #define GREASE_OVERFLOW 4
 #define GREASE_INVALID_PARAMS 3
 #define GREASE_NO_BUFFER 2

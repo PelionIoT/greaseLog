@@ -5,7 +5,7 @@
 
 
 //var build_opts = require('build_opts.js');
-
+var util = require('util');
 var build_opts = { 
 	debug: 1 
 };
@@ -36,7 +36,7 @@ var setup = function(levels) {
 	var TAGS = {};
 	var tagId = 1;
 
-	var ORIGIN = {};
+	var ORIGINS = {};
 	var originId = 1;
 
 	var getTagId = function(o) {
@@ -46,17 +46,19 @@ var setup = function(levels) {
 		else {
 			ret = tagId++;
 			TAGS[o] = ret;
+			instance.addTagLabel(ret,o);
 			return ret;
 		}
 	}
 
 	var getOriginId = function(o) {
-		var ret = ORIGIN[o];
+		var ret = ORIGINS[o];
 		if(ret)
 			return ret;
 		else {
 			ret = originId++;
-			ORIGIN[o] = ret;
+			ORIGINS[o] = ret;
+			instance.addOriginLabel(ret,o);	
 			return ret;
 		}
 	}
@@ -117,6 +119,7 @@ var setup = function(levels) {
 			
 			var createfunc = function(_name,_n) {
 				self[_name] = function(){
+//					console.log("log: " + util.inspect(arguments));
 					if(arguments.length > 2)
 						self._log(_n,arguments[2],arguments[1],arguments[0]);
 					else if(arguments.length == 2)
@@ -146,13 +149,13 @@ var setup = function(levels) {
 	 * @return {[type]} [description]
 	 */
 	this._log = function(level,message,tag,origin) {
-		var originN = ORIGIN[origin];
-//		var levelN  = levels[level];
-//		if(!levelN) return;
-		var tagN    = TAGS[tag];
-		if(!originN) originN = undefined;
-		if(!tagN) tagN = undefined;		
-
+		var	originN = undefined;
+		if(origin)
+			originN = getOriginId(origin);
+		var tagN = undefined;
+		if(tag)
+			tagN = getTagId(tag);
+//		console.log(""+message+","+level + ","+tagN+","+originN);
 		instance.log(message,level,tagN,originN);
 	}
 
@@ -171,10 +174,24 @@ var setup = function(levels) {
 		return instance.addFilter(obj);
 	}
 
-	this.createPTS = function(err,cb) {
-		instance.createPTS(err,cb);
-	}
+	this.createPTS = instance.createPTS;
 
+
+
+	// this.addTagLabel = function(l){
+	// 	var n =	getTagId(l);
+	// 	instance.addTagLabel(n,l);
+	// }
+
+	// this.addTagLabel = function(l){
+	// 	var n =	getTagId(l);
+	// 	instance.addTagLabel(n,l);
+	// }
+
+
+	this.addOriginLabel = instance.addOriginLabel;
+
+	this.setGlobalOpts = instance.setGlobalOpts;
 }
 
 

@@ -134,6 +134,9 @@ struct uint64_t_eqstrP {
 #define NOTREADABLE 0
 #define READABLE    1
 
+#define META_GET_LIST(m,n) ((FilterList *)m._cached_lists[n])
+#define META_SET_LIST(m,n,p) do { m._cached_lists[n] = p; } while(0)
+
 // use these to fix "NO BUFFERS" ... greaseLog will never block if it's IO can't keep up with logging
 // and instead will drop log info
 #define NUM_BANKS 4
@@ -284,10 +287,12 @@ public:
 		heapBuf buf;
 		singleLog() = delete;
 		singleLog(const char *d, int l, const logMeta &_m) : m(_m), buf(d,l) {}
-		singleLog(int len) : m(), buf(len) {}
+		singleLog(int len) : m(), buf(len) {
+			ZERO_LOGMETA(m);
+		}
 		void clear() {
 			buf.used = 0;
-			m.level = 0; m.origin = 0; m.target = 0; m.tag = 0;
+			ZERO_LOGMETA(m);
 		}
 	};
 
@@ -1736,7 +1741,7 @@ protected:
 
 	FilterHashTable filterHashTable;  // look Filters by tag:origin
 
-	bool sift(logMeta &f, FilterList *&list, FilterHash *hash = nullptr); // returns true, then the logger should log it	TWlib::TW_KHash_32<uint16_t, int, TWlib::TW_Mutex, uint16_t_eqstrP, TWlib::Allocator<TWlib::Alloc_Std>  > magicNumTable;
+	bool sift(logMeta &f); // returns true, then the logger should log it	TWlib::TW_KHash_32<uint16_t, int, TWlib::TW_Mutex, uint16_t_eqstrP, TWlib::Allocator<TWlib::Alloc_Std>  > magicNumTable;
 	uint32_t levelFilterOutMask;  // mandatory - all log messages have a level. If the bit is 1, the level will be logged.
 
 	bool defaultFilterOut;
@@ -1778,6 +1783,12 @@ protected:
 		return (uint64_t) (((uint64_t) UINT64_C(0xFFFFFFFF00000000) & ((uint64_t) origin << 32)) | tag);
 	}
 
+	inline void getHashes(TagId tag, OriginId origin, FilterHash *hashes) {
+		hashes[0] = filterhash(tag,origin);
+		hashes[1] = hashes[0] & UINT64_C(0xFFFFFFFF00000000);
+		hashes[2] = hashes[0] & UINT64_C(0x00000000FFFFFFFF);
+	}
+
 	bool _addFilter(TargetId t, OriginId origin, TagId tag, LevelMask level, FilterId &id,
 			logLabel *preformat = nullptr, logLabel *postformat = nullptr) {
 		uint64_t hash = filterhash(tag,origin);
@@ -1810,8 +1821,8 @@ protected:
 
 	uv_loop_t *loggerLoop;  // grease uses its own libuv event loop (not node's)
 
-	int _log(FilterList *list, const logMeta &meta, const char *s, int len); // internal log cmd
-	int _logSync(FilterList *list, const logMeta &meta, const char *s, int len); // internal log cmd
+	int _log(const logMeta &meta, const char *s, int len); // internal log cmd
+	int _logSync(const logMeta &meta, const char *s, int len); // internal log cmd
 
 	void start(actionCB cb, target_start_info *data);
 	int logFromRaw(char *base, int len);
@@ -1828,6 +1839,8 @@ public:
 
     static Handle<Value> New(const Arguments& args);
     static Handle<Value> NewInstance(const Arguments& args);
+
+    static Handle<Value> SetGlobalOpts(const Arguments& args);
 
     static Handle<Value> AddTagLabel(const Arguments& args);
     static Handle<Value> AddOriginLabel(const Arguments& args);

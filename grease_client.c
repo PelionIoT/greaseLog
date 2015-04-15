@@ -16,62 +16,80 @@ extern "C" {
 #endif
 
 
+#define __DEFAULT_LOG_META_PRIVATE ._cached_hash = { UINT64_C(0xFFFFFFFFFFFFFFFF), 0, 0 }, \
+		._cached_lists = { NULL, NULL, NULL, NULL }
 
 //static uint32_t grease_PREAMBLE = SINK_LOG_PREAMBLE;
 const logMeta __noMetaData = {
 		.tag = 0,
 		.level = 0,
 		.origin = 0,
-		.target = 0 };
-
+		.target = 0,
+		__DEFAULT_LOG_META_PRIVATE };
 
 const logMeta __meta_info = {
 		.tag = 0,
 		.level = GREASE_LEVEL_INFO,
 		.origin = 0,
-		.target = 0 };
+		.target = 0,
+		__DEFAULT_LOG_META_PRIVATE };
+
 
 const logMeta __meta_error = {
 		.tag = 0,
 		.level = GREASE_LEVEL_ERROR,
 		.origin = 0,
-		.target = 0 };
+		.target = 0,
+		__DEFAULT_LOG_META_PRIVATE };
+
 
 const logMeta __meta_warn = {
 		.tag = 0,
 		.level = GREASE_LEVEL_WARN,
 		.origin = 0,
-		.target = 0 };
+		.target = 0,
+		__DEFAULT_LOG_META_PRIVATE };
+
 
 const logMeta __meta_debug = {
 		.tag = 0,
 		.level = GREASE_LEVEL_DEBUG,
 		.origin = 0,
-		.target = 0 };
+		.target = 0,
+		__DEFAULT_LOG_META_PRIVATE };
+
 
 const logMeta __meta_debug2 = {
 		.tag = 0,
 		.level = GREASE_LEVEL_DEBUG2,
 		.origin = 0,
-		.target = 0 };
+		.target = 0,
+		__DEFAULT_LOG_META_PRIVATE };
+
 
 const logMeta __meta_debug3 = {
 		.tag = 0,
 		.level = GREASE_LEVEL_DEBUG3,
 		.origin = 0,
-		.target = 0 };
+		.target = 0,
+		__DEFAULT_LOG_META_PRIVATE };
+
 
 const logMeta __meta_user1 = {
 		.tag = 0,
 		.level = GREASE_LEVEL_USER1,
 		.origin = 0,
-		.target = 0 };
+		.target = 0,
+		__DEFAULT_LOG_META_PRIVATE };
+
 
 const logMeta __meta_user2 = {
 		.tag = 0,
 		.level = GREASE_LEVEL_USER2,
 		.origin = 0,
-		.target = 0 };
+		.target = 0,
+		__DEFAULT_LOG_META_PRIVATE };
+
 
 const uint32_t __grease_preamble = SINK_LOG_PREAMBLE;
 
