@@ -192,6 +192,8 @@ var setup = function(levels) {
 	this.addOriginLabel = instance.addOriginLabel;
 
 	this.setGlobalOpts = instance.setGlobalOpts;
+
+	this.modifyDefaultTarget = instance.modifyDefaultTarget;
 }
 
 

@@ -927,24 +927,35 @@ protected:
 		logLabel preFormat;
 		logLabel postFormat;
 
-
 		void setTimeFormat(const char *s, int len) {
+			uv_mutex_lock(&writeMutex);
 			timeFormat.setUTF8(s,len);
+			uv_mutex_unlock(&writeMutex);
 		}
 		void setTagFormat(const char *s, int len) {
+			uv_mutex_lock(&writeMutex);
 			tagFormat.setUTF8(s,len);
+			uv_mutex_unlock(&writeMutex);
 		}
 		void setOriginFormat(const char *s, int len) {
+			uv_mutex_lock(&writeMutex);
 			originFormat.setUTF8(s,len);
+			uv_mutex_unlock(&writeMutex);
 		}
 		void setLevelFormat(const char *s, int len) {
+			uv_mutex_lock(&writeMutex);
 			levelFormat.setUTF8(s,len);
+			uv_mutex_unlock(&writeMutex);
 		}
 		void setPreFormat(const char *s, int len) {
+			uv_mutex_lock(&writeMutex);
 			preFormat.setUTF8(s,len);
+			uv_mutex_unlock(&writeMutex);
 		}
 		void setPostFormat(const char *s, int len) {
+			uv_mutex_lock(&writeMutex);
 			postFormat.setUTF8(s,len);
+			uv_mutex_unlock(&writeMutex);
 		}
 
 		size_t putsHeader(char *mem, size_t remain, const logMeta &m, Filter *filter) {
@@ -1110,8 +1121,10 @@ protected:
 				return;
 			}
 
+			uv_mutex_lock(&writeMutex);
 			len_header_buffer = putsHeader(header_buffer,(size_t) GREASE_MAX_PREFIX_HEADER,m,filter);
 			len_footer_buffer = putsFooter(footer_buffer,(size_t) GREASE_MAX_PREFIX_HEADER-len_header_buffer,filter);
+			uv_mutex_unlock(&writeMutex);
 			bool no_footer = true;
 			if(len_footer_buffer > 0) no_footer = false;
 
@@ -1895,6 +1908,8 @@ public:
     static Handle<Value> RemoveFilter(const Arguments& args);
     static Handle<Value> AddTarget(const Arguments& args);
     static Handle<Value> AddSink(const Arguments& args);
+
+    static Handle<Value> ModifyDefaultTarget(const Arguments& args);
 
     static Handle<Value> Start(const Arguments& args);
 

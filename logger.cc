@@ -127,12 +127,20 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
     						int n = 0;
     						while(LIST->list[n].id != 0) {
     							logTarget *t = NULL;
-    							if((LIST->list[n].levelMask & l->m.level) && GreaseLogger::LOGGER->targets.find(LIST->list[n].targetId, t)) {
-    					//        						DBG_OUT("write out: %s",l->buf.handle.base);
-    								t->write(l->buf.handle.base,(uint32_t) l->buf.used,l->m, &LIST->list[n]);
-    								wrote = true;
+    							if((LIST->list[n].levelMask & l->m.level)) {
+    								if(LIST->list[n].targetId == 0) {
+    			    					//        						DBG_OUT("write out: %s",l->buf.handle.base);
+    									GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,(uint32_t) l->buf.used,l->m, &LIST->list[n]);
+    									wrote = true;
+    								} else
+    								if(GreaseLogger::LOGGER->targets.find(LIST->list[n].targetId, t)) {
+    			    					//        						DBG_OUT("write out: %s",l->buf.handle.base);
+        								t->write(l->buf.handle.base,(uint32_t) l->buf.used,l->m, &LIST->list[n]);
+        								wrote = true;
+    								} else {
+    			    					//        						DBG_OUT("Orphaned target id: %d\n",list->list[n].targetId);
+    								}
     							} else {
-    					//        						DBG_OUT("Orphaned target id: %d\n",list->list[n].targetId);
     							}
     							n++;
     						}
@@ -652,6 +660,56 @@ Handle<Value> GreaseLogger::AddLevelLabel(const Arguments& args) {
 	return scope.Close(Undefined());
 };
 
+Handle<Value> GreaseLogger::ModifyDefaultTarget(const Arguments& args) {
+	HandleScope scope;
+
+	if(args.Length() > 0 && args[0]->IsObject()){
+
+		logTarget *targ = GreaseLogger::LOGGER->defaultTarget;
+		Local<Object> jsTarg = args[0]->ToObject();
+
+		Local<Value> jsDelim = jsTarg->Get(String::New("delim"));
+		Local<Value> jsDelimOut = jsTarg->Get(String::New("delim_output"));
+		// TODO update delim
+		Local<Value> jsFormat = jsTarg->Get(String::New("format"));
+
+		if(jsFormat->IsObject()) {
+			Local<Object> jsObj = jsFormat->ToObject();
+			Local<Value> jsKey = jsObj->Get(String::New("pre"));
+			if(jsKey->IsString()) {
+				v8::String::Utf8Value v8str(jsKey);
+				targ->setPreFormat(v8str.operator *(),v8str.length());
+			}
+			jsKey = jsObj->Get(String::New("time"));
+			if(jsKey->IsString()) {
+				v8::String::Utf8Value v8str(jsKey);
+				targ->setTimeFormat(v8str.operator *(),v8str.length());
+			}
+			jsKey = jsObj->Get(String::New("level"));
+			if(jsKey->IsString()) {
+				v8::String::Utf8Value v8str(jsKey);
+				targ->setLevelFormat(v8str.operator *(),v8str.length());
+			}
+			jsKey = jsObj->Get(String::New("tag"));
+			if(jsKey->IsString()) {
+				v8::String::Utf8Value v8str(jsKey);
+				targ->setTagFormat(v8str.operator *(),v8str.length());
+			}
+			jsKey = jsObj->Get(String::New("origin"));
+			if(jsKey->IsString()) {
+				v8::String::Utf8Value v8str(jsKey);
+				targ->setOriginFormat(v8str.operator *(),v8str.length());
+			}
+			jsKey = jsObj->Get(String::New("post"));
+			if(jsKey->IsString()) {
+				v8::String::Utf8Value v8str(jsKey);
+				targ->setPostFormat(v8str.operator *(),v8str.length());
+			}
+		}
+	}
+	scope.Close(Undefined());
+}
+
 /**
  * addFilter(obj) where
  * obj = {
@@ -659,7 +717,11 @@ Handle<Value> GreaseLogger::AddLevelLabel(const Arguments& args) {
  *      origin: 0x33,    // any positive number > 0
  *      tag: 0x25        // any positive number > 0,
  *      target: 3,       // mandatory
- *      mask:  0x4000000 // optional (default, show everything: 0xFFFFFFF)
+ *      mask:  0x4000000 // optional (default, show everything: 0xFFFFFFF),
+ *      format: {        // optional (formatting settings)
+ *      	pre: 'targ-pre>', // optional pre string
+ *      	post: '<targ-post;
+ *      }
  * }
  */
 Handle<Value> GreaseLogger::AddFilter(const Arguments& args) {
@@ -697,7 +759,8 @@ Handle<Value> GreaseLogger::AddFilter(const Arguments& args) {
 		if(jsTarget->IsUint32()) {
 			targetId = (OriginId) jsTarget->Uint32Value();
 		} else {
-			ok = false;
+//			ok = false;
+			targetId = 0;
 		}
 
 		if(!ok) {
@@ -1126,6 +1189,8 @@ void GreaseLogger::Init() {
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addTagLabel"), FunctionTemplate::New(AddTagLabel)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addOriginLabel"), FunctionTemplate::New(AddOriginLabel)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addLevelLabel"), FunctionTemplate::New(AddLevelLabel)->GetFunction());
+
+	tpl->InstanceTemplate()->Set(String::NewSymbol("modifyDefaultTarget"), FunctionTemplate::New(ModifyDefaultTarget)->GetFunction());
 
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addFilter"), FunctionTemplate::New(AddFilter)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("removeFilter"), FunctionTemplate::New(RemoveFilter)->GetFunction());
