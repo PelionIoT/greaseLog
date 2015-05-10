@@ -16,11 +16,13 @@ rm -f $LOG
 mkdir -p ${DEPS_DIR}/build
 
 pushd $GPERF_DIR
-
 touch $LOG
 cp configure.orig configure
 make clean
-echo "Echo building dependencies"
-(./configure $CONFIG_OPTIONS --prefix=${DEPS_DIR}/build --enable-frame-pointers --with-pic 2>&1 >> $LOG && make -j4 2>&1 >> $LOG && make install 2>&1 >> $LOG) || echo "Error building gperftools-2.4"
+echo "Echo building dependencies..." > $LOG
+./configure $CONFIG_OPTIONS --prefix=${DEPS_DIR}/build --enable-frame-pointers --with-pic 2>&1 >> $LOG || echo "Failed in configure for gperftools" >> $LOG
+make -j4 2>&1 >> $LOG || echo "Failed to compile gperftools" >> $LOG
+make install 2>&1 >> $LOG || echo "Failed to install gperftools to: $DEPS_DIR/build" >> $LOG
+#echo "Error building gperftools-2.4" > $LOG
 make clean
 popd

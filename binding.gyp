@@ -26,7 +26,7 @@
 
         [
           "OS=='linux'", {
-          "doit" : '<!(deps/install_deps.sh 2>&1 > install_deps.log)',
+          "doit" : '<!(deps/install_deps.sh)',
 
       "sources": [
         "logger.cc",
