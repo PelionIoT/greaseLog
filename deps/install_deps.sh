@@ -12,10 +12,15 @@ DEPS_DIR="$( cd -P "$( dirname "$SOURCE" )" && pwd )"
 LOG=${DEPS_DIR}/../install_deps.log
 GPERF_DIR=${DEPS_DIR}/gperftools-2.4
 
+rm -f $LOG
+mkdir -p ${DEPS_DIR}/build
+
 pushd $GPERF_DIR
 
 touch $LOG
 cp configure.orig configure
+make clean
+echo "Echo building dependencies"
 (./configure $CONFIG_OPTIONS --prefix=${DEPS_DIR}/build --enable-frame-pointers --with-pic 2>&1 >> $LOG && make -j4 2>&1 >> $LOG && make install 2>&1 >> $LOG) || echo "Error building gperftools-2.4"
 make clean
 popd
