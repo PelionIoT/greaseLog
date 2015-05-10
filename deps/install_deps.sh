@@ -25,4 +25,9 @@ make -j4 2>&1 >> $LOG || echo "Failed to compile gperftools" >> $LOG
 make install 2>&1 >> $LOG || echo "Failed to install gperftools to: $DEPS_DIR/build" >> $LOG
 #echo "Error building gperftools-2.4" > $LOG
 make clean
+if [ -e "$DEPS_DIR/build/include/google/tcmalloc.h" ]; then
+    exit 1
+else
+    exit 0
+fi
 popd
