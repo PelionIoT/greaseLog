@@ -7,7 +7,7 @@ var logger = require('../index.js')();
 var util = require('util');
 
 
-console.dir(logger);
+//console.dir(logger);
 
 var N = 0;
 
@@ -16,6 +16,11 @@ var testCallback = function(str,id) {
 	for(var n=0;n<entries.length;n++)
 		console.log("CB (" + id + ")>" + entries[n] + "<");
 }
+
+// would disable all log.trace calls
+// logger.setGlobalOpts({
+// 	levelFilterOutMask: logger.LEVELS.trace
+// });
 
 logger.addTarget({
 //	    file: "testlog.log",

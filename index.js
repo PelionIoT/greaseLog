@@ -10,7 +10,9 @@ var build_opts = {
 	debug: 1 
 };
 var colors = require('./colors.js');
-var _console_log = console.log;
+//var _console_log = console.log;
+var _console_log = function() {}
+
 var nativelib = null;
 try {
 	nativelib = require('./build/Release/greaseLog.node');
@@ -31,7 +33,7 @@ for(var n=0;n<natives.length;n++) {
 
 var instance = null;
 var setup = function(options) {
-	console.log("SETUP!!!!!!!!!!");
+//	console.log("SETUP!!!!!!!!!!");
 
 	var TAGS = {};
 	var tagId = 1;
@@ -80,12 +82,12 @@ var setup = function(options) {
 	var do_trace = true;
 	var levels = LEVELS_default;
 	if(options) {
-		console.dir(options);
+//		console.dir(options);
 		if(options.levels) levels = options.levels;
 		if(options.do_trace !== undefined) do_trace = options.do_trace;
 	}
 
-	console.dir(levels);
+//	console.dir(levels);
 
 	this.LEVELS = {};
 	this.LEVELS.ALL = 0xFFFFFFFF; // max uint32_t
@@ -145,7 +147,7 @@ var setup = function(options) {
 	if(!instance) {
 		instance = nativelib.newLogger();
 		instance.start(function(){              // replace dummy logger function with real functions... as soon as can.
-			console.log("START!!!!!!!!!!!");
+			_console_log("START!!!!!!!!!!!");
 			var levelsK = Object.keys(levels);
 			
 			var createfunc = function(_name,_n) {
