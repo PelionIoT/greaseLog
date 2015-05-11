@@ -18,16 +18,23 @@ mkdir -p ${DEPS_DIR}/build
 pushd $GPERF_DIR
 touch $LOG
 cp configure.orig configure
-make clean
-echo "Echo building dependencies..." > $LOG
+cp Makefile.in.orig Makefile.in
+#make clean
+echo "Echo building dependencies..." >> $LOG
 ./configure $CONFIG_OPTIONS --prefix=${DEPS_DIR}/build --enable-frame-pointers --with-pic 2>&1 >> $LOG || echo "Failed in configure for gperftools" >> $LOG
 make -j4 2>&1 >> $LOG || echo "Failed to compile gperftools" >> $LOG
 make install 2>&1 >> $LOG || echo "Failed to install gperftools to: $DEPS_DIR/build" >> $LOG
 #echo "Error building gperftools-2.4" > $LOG
-make clean
+#make clean
+rm -f $GPERF_DIR/Makefile
 if [ -e "$DEPS_DIR/build/include/google/tcmalloc.h" ]; then
-    exit 1
-else
+    echo "Successful build of depenencies" >> $LOG
+    echo "ok"
     exit 0
+else
+    echo "Missing tcmalloc.h!!" >> $LOG
+    echo "notok"
+    exit 1
 fi
+rm -f Makefile.in
 popd
