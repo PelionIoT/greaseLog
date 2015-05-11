@@ -1,23 +1,32 @@
 {
-  "name": "greaseLog",
-  "version": "0.0.1",
+  "name": "grease-log",
+  "version": "0.0.2",
   "description": "Fast, production logging subsystem",
   "main": "index.js",
   "keywords": [
-    "logging", "logger"
+    "logging",
+    "logger"
   ],
-  "author": "WigWag<npm@wigwag.com> (http://www.wigwag.com)",
+  "author": "WigWag <npm@wigwag.com> (http://www.wigwag.com)",
   "licenses": [
     {
       "type": "MIT"
     }
   ],
-  "repository" :
-  { "type" : "git"
-  , "url" : "https://github.com/WigWagCo/greaseLog"
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/WigWagCo/greaseLog"
   },
   "bugs": {
     "url": "https://github.com/WigWagCo/greaseLog/issues"
   },
-  "gypfile": true
+  "gypfile": true,
+  "scripts": {
+    "install": "node-gyp rebuild"
+  },
+  "homepage": "https://github.com/WigWagCo/greaseLog",
+  "directories": {
+    "test": "test"
+  },
+  "license": "MIT"
 }

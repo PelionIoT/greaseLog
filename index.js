@@ -10,7 +10,7 @@ var build_opts = {
 	debug: 1 
 };
 var colors = require('./colors.js');
-
+var _console_log = console.log;
 var nativelib = null;
 try {
 	nativelib = require('./build/Release/greaseLog.node');
@@ -25,12 +25,12 @@ var _logger = {};
 
 var natives = Object.keys(nativelib);
 for(var n=0;n<natives.length;n++) {
-	console.log(natives[n] + " typeof " + typeof nativelib[natives[n]]);
+//	console.log(natives[n] + " typeof " + typeof nativelib[natives[n]]);
 	_logger[natives[n]] = nativelib[natives[n]];
 }
 
 var instance = null;
-var setup = function(levels) {
+var setup = function(options) {
 	console.log("SETUP!!!!!!!!!!");
 
 	var TAGS = {};
@@ -76,8 +76,14 @@ var setup = function(levels) {
 		'user2'    : 0x80,  // Levels can use the rest of the bits too...
 		'success'  : 0x100
 	};
+	var do_trace = true;
+	var levels = LEVELS_default;
+	if(options) {
+		console.dir(options);
+		if(options.levels) levels = options.levels;
+		if(options.do_trace !== undefined) do_trace = options.do_trace;
+	}
 
-	if(!levels) levels = LEVELS_default;
 	console.dir(levels);
 
 	this.LEVELS = {};
@@ -99,6 +105,30 @@ var setup = function(levels) {
 	}
 
 
+	var getStack = function() {
+		// EXPENSIVE !!!!!!!!!!!!
+		var data = {};
+		// get call stack, and analyze it
+		// get all file,method and line number
+		data.stack = (new Error()).stack.split('\n').slice(3);
+
+		// Stack trace format :
+		// http://code.google.com/p/v8/wiki/JavaScriptStackTraceApi
+		var s = data.stack[0], sp = /at\s+(.*)\s+\((.*):(\d*):(\d*)\)/gi
+				.exec(s)
+			|| /at\s+()(.*):(\d*):(\d*)/gi.exec(s);
+		if (sp && sp.length === 5) {
+			data.method = sp[1];
+			data.path = sp[2];
+			data.line = sp[3];
+			data.pos = sp[4];
+			var paths = data.path.split('/');
+			data.file = paths[paths.length - 1];
+			if(paths.length > 1)
+				data.subdir = paths[paths.length - 2] + '/';
+		}
+		return data;
+	}
 
 	var self = this;
 
@@ -127,19 +157,48 @@ var setup = function(levels) {
 					else
 						self._log(_n,arguments[0]);
 				}
+				// make a LEVEL_fmt version of the log level command - this won't accept TAG or ORIGIN, but
+				// will let the user use multiple parameters, ala node.js - using util.format()
+				// example: log.debug_fmt("%d", 4)
+				self[_name+'_fmt'] = function() {
+					var s = util.format.apply(undefined,arguments);
+					self._log(_n,s);
+				}
+				// a LEVEL_tag_fmt variation.
+				// a variation allowing a tag and fancy formating.
+				// this is more expensive.
+				self[_name+'_tag_fmt'] = function() {
+					var args = [];
+					for(var n=1;n<arguments.length;n++)
+						args[n-1] = arguments[n];
+					var s = util.format.apply(undefined,args);
+					self._log(_n,s,arguments[0]);
+				}
+				// this is a LEVEL_trace version of the function.
+				// it provdes a location where the log was made. this is *very* expensive.
+				self[_name+'_trace'] = function() {
+					if(do_trace) {
+						var args = [];
+						for(var n=0;n<arguments.length;n++)
+							args[n] = arguments[n];
+						var d = getStack();
+						var s = util.format.apply(undefined,args);
+						self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+s,arguments[0],d.subdir+d.file);						
+					} else
+						self[_name+'_tag_fmt'].apply(self,arguments);
+				}
+
 			}
 
 			for(var n=0;n<levelsK.length;n++) {
 				var N = levels[levelsK[n]];
 				var name = levelsK[n];
 				instance.addLevelLabel(N,name);  // place label into native binding
-				console.log("adding " + name);
+//				console.log("adding " + name);
 				createfunc(name,N);
 			}
 		});
 	}
-
-
 
 	/**
 	 * @param {string} level
@@ -194,12 +253,14 @@ var setup = function(levels) {
 	this.setGlobalOpts = instance.setGlobalOpts;
 
 	this.modifyDefaultTarget = instance.modifyDefaultTarget;
+
 }
 
 
 
 
-
-module.exports = new setup();
+module.exports = function(options) {
+	return new setup(options);
+};
 
 

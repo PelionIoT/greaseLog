@@ -1,10 +1,10 @@
 // basic test of logging.
 
-var logger = require('../index.js');
+var logger = require('../index.js')();
 var util = require('util');
 
 
-console.dir(logger);
+//console.dir(logger);
 
 var N = 0;
 
@@ -67,7 +67,7 @@ logger.modifyDefaultTarget({
     	origin: "(%s) ",
     	post: "<POST" // post: "<post"
 	}
-});
+});	
 
 // logger.createPTS(function(err,pty){
 // 	if(err) {

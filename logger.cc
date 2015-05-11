@@ -670,7 +670,12 @@ Handle<Value> GreaseLogger::ModifyDefaultTarget(const Arguments& args) {
 
 		Local<Value> jsDelim = jsTarg->Get(String::New("delim"));
 		Local<Value> jsDelimOut = jsTarg->Get(String::New("delim_output"));
-		// TODO update delim
+
+		if(jsDelim->IsString()) {
+			v8::String::Utf8Value v8str(jsDelim);
+			targ->delim.setDelim(v8str.operator *(),v8str.length());
+		}
+
 		Local<Value> jsFormat = jsTarg->Get(String::New("format"));
 
 		if(jsFormat->IsObject()) {
@@ -707,7 +712,7 @@ Handle<Value> GreaseLogger::ModifyDefaultTarget(const Arguments& args) {
 			}
 		}
 	}
-	scope.Close(Undefined());
+	return scope.Close(Undefined());
 }
 
 /**
@@ -900,7 +905,7 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 			if(args.Length() > 0 && args[1]->IsFunction())
 				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
 			targ = new ttyTarget(buffsize, id, l, targetReady,  std::move(delims), i, v8str.operator *());
-		} else if (isTty->IsInt32()) {
+		} else if (!isTty.IsEmpty() && isTty->IsInt32()) {
 			target_start_info *i = new target_start_info();
 //			i->system_start_info = data;
 			i->cb = start_target_cb;
