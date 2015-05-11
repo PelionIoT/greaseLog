@@ -107,6 +107,8 @@ logger.addTarget({
 			logger.error("....ERROR....");
 			logger.log(" log log log");
 			logger.trace("test");
+			logger.trace({stuff:"stuff"},"dumb idea"); // a poor way to log - slower
+			logger.log("slow", "uses","util.format()","style","logging");
 			// console.log("....DEBUG....");
 			// console.log('Eds', "....DEBUG....");			
 			// console.log("....ERROR....");

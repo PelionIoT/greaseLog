@@ -155,8 +155,23 @@ var setup = function(options) {
 						for(var n=0;n<arguments.length;n++)
 							args[n] = arguments[n];
 						var d = getStack();
-						var s = util.format.apply(undefined,args);
-						self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+s,arguments[0],d.subdir+d.file);							
+//						var stk = util.format.apply(undefined,args);
+						if(typeof arguments[0] !== 'string' || arguments.length > 3) {
+							var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
+							for(var n=0;n<arguments.length;n++) {
+								if(typeof arguments[n] !== 'string')
+									s += " " + util.inspect(arguments[n]);							
+								else
+									s += " " + arguments[n];
+							}
+							self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+ s,d.subdir+d.file);														
+						} else {
+							if(arguments.length > 1)		
+								self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],arguments[1],d.subdir+d.file);
+							else
+								self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],d.subdir+d.file);														
+						}
+
 	//					console.log("log: " + util.inspect(arguments));
 						// if(arguments.length > 2)
 						// 	self._log(_n,arguments[2],arguments[1],arguments[0]);
@@ -167,13 +182,24 @@ var setup = function(options) {
 					}
 				} else {
 					self[_name] = function(){
-	//					console.log("log: " + util.inspect(arguments));
-						if(arguments.length > 2)
-							self._log(_n,arguments[2],arguments[1],arguments[0]);
-						else if(arguments.length == 2)
-							self._log(_n,arguments[1],arguments[0]);
-						else
-							self._log(_n,arguments[0]);
+						// a caller used the log.X function with util.format style parameters						
+						if(typeof arguments[0] !== 'string' || arguments.length > 3) {
+							var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
+							for(var n=0;n<arguments.length;n++) {
+								if(typeof arguments[n] !== 'string')
+									s += " " + util.inspect(arguments[n]);							
+								else
+									s += " " + arguments[n];
+							}
+							self._log(_n,s);
+						} else {
+							if(arguments.length > 2)
+								self._log(_n,arguments[2],arguments[1],arguments[0]);
+							else if(arguments.length == 2)
+								self._log(_n,arguments[1],arguments[0]);
+							else
+								self._log(_n,arguments[0]);
+						}
 					}
 				}
 				// make a LEVEL_fmt version of the log level command - this won't accept TAG or ORIGIN, but
