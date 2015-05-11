@@ -17,9 +17,9 @@ var testCallback = function(str,id) {
 		console.log("CB (" + id + ")>" + entries[n] + "<");
 }
 
-// would disable all log.trace calls
+//would disable all log.trace & log.debug calls
 // logger.setGlobalOpts({
-// 	levelFilterOutMask: logger.LEVELS.trace
+// 	levelFilterOutMask: logger.LEVELS.trace | logger.LEVELS.debug
 // });
 
 logger.addTarget({

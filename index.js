@@ -66,6 +66,7 @@ var setup = function(options) {
 	}
 
 
+
 	var LEVELS_default = {
 		'info'     : 0x01,
 		'log'      : 0x01,
@@ -91,7 +92,7 @@ var setup = function(options) {
 
 	this.LEVELS = {};
 	this.LEVELS.ALL = 0xFFFFFFFF; // max uint32_t
-
+	this.MASK_OUT = 0;
 
 	var levelsK = Object.keys(levels);
 	for(var n=0;n<levelsK.length;n++) {
@@ -153,6 +154,9 @@ var setup = function(options) {
 			var createfunc = function(_name,_n) {
 				if(_name == 'trace') {  
 					self[_name] = function(){ // trace is special
+						if(self.MASK_OUT & _n) {
+							return; // fast track out - if this log function is turned off
+						}
 						var args = [];
 						for(var n=0;n<arguments.length;n++)
 							args[n] = arguments[n];
@@ -184,6 +188,9 @@ var setup = function(options) {
 					}
 				} else {
 					self[_name] = function(){
+						if(self.MASK_OUT & _n) {
+							return; // fast track out - if this log function is turned off
+						}
 						// a caller used the log.X function with util.format style parameters						
 						if(typeof arguments[0] !== 'string' || arguments.length > 3) {
 							var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
@@ -298,7 +305,11 @@ var setup = function(options) {
 
 	this.addOriginLabel = instance.addOriginLabel;
 
-	this.setGlobalOpts = instance.setGlobalOpts;
+	this.setGlobalOpts = function(obj) {
+		if(obj.levelFilterOutMask)
+			self.MASK_OUT = obj.levelFilterOutMask;
+		instance.setGlobalOpts(obj);
+	};
 
 	this.modifyDefaultTarget = instance.modifyDefaultTarget;
 
