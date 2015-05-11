@@ -1,6 +1,6 @@
 // basic test of logging.
 
-var logger = require('../index.js');
+var logger = require('../index.js')();
 
 
 
@@ -106,7 +106,7 @@ logger.addTarget({
 			logger.debug('Eds', "....DEBUG(2)....");			
 			logger.error("....ERROR....");
 			logger.log(" log log log");
-
+			logger.trace("test");
 			// console.log("....DEBUG....");
 			// console.log('Eds', "....DEBUG....");			
 			// console.log("....ERROR....");

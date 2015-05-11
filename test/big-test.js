@@ -1,6 +1,6 @@
 // basic test of logging.
 
-var logger = require('../index.js');
+var logger = require('../index.js')();
 
 
 

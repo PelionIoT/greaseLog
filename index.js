@@ -74,7 +74,8 @@ var setup = function(options) {
 		'debug3'   : 0x20,
 		'user1'    : 0x40,
 		'user2'    : 0x80,  // Levels can use the rest of the bits too...
-		'success'  : 0x100
+		'success'  : 0x100,
+		'trace'    : 0x200
 	};
 	var do_trace = true;
 	var levels = LEVELS_default;
@@ -148,14 +149,32 @@ var setup = function(options) {
 			var levelsK = Object.keys(levels);
 			
 			var createfunc = function(_name,_n) {
-				self[_name] = function(){
-//					console.log("log: " + util.inspect(arguments));
-					if(arguments.length > 2)
-						self._log(_n,arguments[2],arguments[1],arguments[0]);
-					else if(arguments.length == 2)
-						self._log(_n,arguments[1],arguments[0]);
-					else
-						self._log(_n,arguments[0]);
+				if(_name == 'trace') {  
+					self[_name] = function(){ // trace is special
+						var args = [];
+						for(var n=0;n<arguments.length;n++)
+							args[n] = arguments[n];
+						var d = getStack();
+						var s = util.format.apply(undefined,args);
+						self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+s,arguments[0],d.subdir+d.file);							
+	//					console.log("log: " + util.inspect(arguments));
+						// if(arguments.length > 2)
+						// 	self._log(_n,arguments[2],arguments[1],arguments[0]);
+						// else if(arguments.length == 2)
+						// 	self._log(_n,arguments[1],arguments[0]);
+						// else
+						// 	self._log(_n,arguments[0]);
+					}
+				} else {
+					self[_name] = function(){
+	//					console.log("log: " + util.inspect(arguments));
+						if(arguments.length > 2)
+							self._log(_n,arguments[2],arguments[1],arguments[0]);
+						else if(arguments.length == 2)
+							self._log(_n,arguments[1],arguments[0]);
+						else
+							self._log(_n,arguments[0]);
+					}
 				}
 				// make a LEVEL_fmt version of the log level command - this won't accept TAG or ORIGIN, but
 				// will let the user use multiple parameters, ala node.js - using util.format()
@@ -174,6 +193,7 @@ var setup = function(options) {
 					var s = util.format.apply(undefined,args);
 					self._log(_n,s,arguments[0]);
 				}
+
 				// this is a LEVEL_trace version of the function.
 				// it provdes a location where the log was made. this is *very* expensive.
 				self[_name+'_trace'] = function() {
