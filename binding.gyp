@@ -51,6 +51,7 @@
           "-Wall",
           "-std=c++11",
           "-D_POSIX_C_SOURCE=200809L",
+          "-D_GNU_SOURCE",
           "-DERRCMN_DEBUG_BUILD=1",
           "-fno-omit-frame-pointer",  # required by tcmalloc, but not a default on x86_64
 ## not needed since we explicitly call tcmalloc
@@ -72,6 +73,7 @@
           "-Wall",
           "-std=c++11",
           "-D_POSIX_C_SOURCE=200809L",
+          "-D_GNU_SOURCE",
           "-fno-omit-frame-pointer",  # required by tcmalloc, but not a default on x86_64
 ## not needed since we explicitly call tcmalloc
 ##          "-fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free"
