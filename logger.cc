@@ -31,7 +31,7 @@ Handle<Value> GreaseLogger::SetGlobalOpts(const Arguments& args) {
 	Local<Function> cb;
 
 	if(args.Length() < 1 || !args[0]->IsObject()) {
-		return ThrowException(Exception::TypeError(String::New("createPTS: bad parameters")));
+		return ThrowException(Exception::TypeError(String::New("setGlobalOpts: bad parameters")));
 	}
 
 	Local<Object> jsObj = args[0]->ToObject();

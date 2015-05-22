@@ -56,10 +56,8 @@ logger.createPTS(function(err,pty){
 	if(err) {
 		console.error("Error creating PTS: " + util.inspect(err));
 	} else {
-
 		fd = pty.fd;
 		console.log("PTY: " + pty.path);
-
 	}
 });
 
