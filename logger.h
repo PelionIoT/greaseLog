@@ -50,6 +50,8 @@ using namespace v8;
 #define LREALLOC tc_realloc
 #define LFREE tc_free
 
+extern "C" char *local_strdup_safe(const char *s);
+
 namespace Grease {
 
 
@@ -673,7 +675,7 @@ protected:
 			uv_pipe_init(l,&pipe,0);
 			pipe.data = this;
 			if(_path)
-				path = strdup(_path);
+				path = local_strdup_safe(_path);
 			for (int n=0;n<BUFFERS_PER_SINK;n++) {
 				heapBuf *b = new heapBuf(SINK_BUFFER_SIZE);
 				buffers.add(b);
@@ -1708,7 +1710,7 @@ protected:
 			uv_mutex_init(&rotateFileMutex);
 			uv_rwlock_init(&wrLock);
 			readydata->needsAsyncQueue = true;
-			myPath = strdup(path);
+			myPath = local_strdup_safe(path);
 			if(!path) {
 				ERROR_OUT("Need a file path!!");
 				_errcmn::err_ev err;

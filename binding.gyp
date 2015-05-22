@@ -31,6 +31,7 @@
       "sources": [
         "logger.cc",
         "grease.cc",
+        "local_strdup.c",
         "error-common.cc",
         "grease_client.c",
         "deps/twlib/tw_alloc.cpp",

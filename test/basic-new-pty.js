@@ -1,6 +1,6 @@
 // basic test of logging.
 
-var logger = require('../index.js');
+var logger = require('../index.js')();
 var util = require('util');
 
 
@@ -53,7 +53,7 @@ var testCallback = function(str,id) {
 var fd = null;
 
 logger.createPTS(function(err,pty){
-	if(err) {
+	if(err) {	
 		console.error("Error creating PTS: " + util.inspect(err));
 	} else {
 		fd = pty.fd;

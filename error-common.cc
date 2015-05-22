@@ -28,7 +28,9 @@
 
 
 #include <string.h>
-extern char *strdup(const char *s);
+//extern char *strdup(const char *s);
+
+extern "C" char *local_strdup_safe(const char *s);
 
 namespace _errcmn {
 
@@ -953,12 +955,12 @@ custom_errno custom_errs[] = {
 			} else {
 				char *custom = get_custom_err_str(_errno);
 				if(custom)
-					errstr = ::strdup(custom);
+					errstr = ::local_strdup_safe(custom);
 				else
-				    errstr = ::strdup("Unknown Error.");
+				    errstr = ::local_strdup_safe("Unknown Error.");
 			}
 		} else
-			errstr = ::strdup(m);
+			errstr = ::local_strdup_safe(m);
 	}
 
 	v8::Local<v8::Value> errno_to_JS(int _errno, const char *prefix) {

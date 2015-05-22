@@ -71,7 +71,7 @@ logger.addTarget({
 				// ,
 				// mask: logger.LEVELS.ALL
 			});
-		}		
+		}			
 		var N = 1000;
 		logger.debug('rotate',"************ FIRST **********");
 		var I = setInterval(function(){
