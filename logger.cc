@@ -670,11 +670,102 @@ Handle<Value> GreaseLogger::ModifyDefaultTarget(const Arguments& args) {
 
 		Local<Value> jsDelim = jsTarg->Get(String::New("delim"));
 		Local<Value> jsDelimOut = jsTarg->Get(String::New("delim_output"));
+		// If either of these is set, the user means to change the default target
+		Local<Value> jsTTY = jsTarg->Get(String::New("tty"));
+		Local<Value> jsFile = jsTarg->Get(String::New("file"));
 
-		if(jsDelim->IsString()) {
-			v8::String::Utf8Value v8str(jsDelim);
-			targ->delim.setDelim(v8str.operator *(),v8str.length());
+		bool makenewtarget = false;
+
+		if(jsTTY->IsString()) {
+			target_start_info *i = new target_start_info();
+
+			i->cb = NULL;
+			i->targId = DEFAULT_TARGET;
+
+
+			delim_data defaultdelim;
+			if(jsDelim->IsString()) {
+				v8::String::Utf8Value v8str(jsDelim);
+				defaultdelim.setDelim(v8str.operator *(),v8str.length());
+			} else {
+				defaultdelim.delim.sprintf("\n");
+			}
+
+			GreaseLogger::LOGGER->Opts.lock();
+			int size = GreaseLogger::LOGGER->Opts.bufferSize;
+			GreaseLogger::LOGGER->Opts.unlock();
+			targ = new ttyTarget(size, DEFAULT_TARGET, GreaseLogger::LOGGER, targetReady,std::move(defaultdelim), i);
+
+		} else if(jsFile->IsString()) {
+
+			target_start_info *i = new target_start_info();
+
+			delim_data defaultdelim;
+			if(jsDelim->IsString()) {
+				v8::String::Utf8Value v8str(jsDelim);
+				defaultdelim.setDelim(v8str.operator *(),v8str.length());
+			} else {
+				defaultdelim.delim.sprintf("\n");
+			}
+
+			GreaseLogger::LOGGER->Opts.lock();
+			int size = GreaseLogger::LOGGER->Opts.bufferSize;
+			GreaseLogger::LOGGER->Opts.unlock();
+
+			Local<Value> jsMode = jsTarg->Get(String::New("mode"));
+			Local<Value> jsFlags = jsTarg->Get(String::New("flags"));
+			Local<Value> jsRotate = jsTarg->Get(String::New("rotate"));
+			int mode = DEFAULT_MODE_FILE_TARGET;
+			int flags = DEFAULT_FLAGS_FILE_TARGET;
+			if(jsMode->IsInt32()) {
+				mode = jsMode->Int32Value();
+			}
+			if(jsFlags->IsInt32()) {
+				flags = jsFlags->Int32Value();
+			}
+
+
+			i->cb = NULL;
+			i->targId = DEFAULT_TARGET;
+
+			v8::String::Utf8Value v8str(jsFile);
+			if(args.Length() > 0 && args[1]->IsFunction())
+				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
+			fileTarget::rotationOpts opts;
+			if(jsRotate->IsObject()) {
+				Local<Object> jsObj = jsRotate->ToObject();
+				Local<Value> js_max_files = jsObj->Get(String::New("max_files"));
+				Local<Value> js_max_file_size = jsObj->Get(String::New("max_file_size"));
+				Local<Value> js_total_size = jsObj->Get(String::New("max_total_size"));
+				Local<Value> js_on_start = jsObj->Get(String::New("rotate_on_start"));
+				if(js_max_files->IsUint32()) {
+					opts.max_files = js_max_files->Uint32Value(); opts.enabled = true;
+				}
+				if(js_max_file_size->IsUint32()) {
+					opts.max_file_size = js_max_file_size->Uint32Value(); opts.enabled = true;
+				}
+				if(js_total_size->IsUint32()) {
+					opts.max_total_size = js_total_size->Uint32Value(); opts.enabled = true;
+				}
+				if(js_on_start->IsBoolean()) {
+					if(js_on_start->IsTrue())
+						opts.rotate_on_start = true; opts.enabled = true;
+				}
+			}
+			HEAVY_DBG_OUT("********* NEW target_start_info: %p\n", i);
+
+			if(opts.enabled)
+				targ = new fileTarget(size, DEFAULT_TARGET, GreaseLogger::LOGGER, flags, mode, v8str.operator *(), std::move(defaultdelim), i, targetReady, opts);
+			else
+				targ = new fileTarget(size, DEFAULT_TARGET, GreaseLogger::LOGGER, flags, mode, v8str.operator *(), std::move(defaultdelim), i, targetReady);
+
+		} else {
+			if(jsDelim->IsString()) {
+				v8::String::Utf8Value v8str(jsDelim);
+				targ->delim.setDelim(v8str.operator *(),v8str.length());
+			}
 		}
+
 
 		Local<Value> jsFormat = jsTarg->Get(String::New("format"));
 

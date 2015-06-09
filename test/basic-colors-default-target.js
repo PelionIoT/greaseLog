@@ -59,6 +59,14 @@ logger.setGlobalOpts({
 });
 
 logger.modifyDefaultTarget({
+	file: "testDefault.log",
+	delim: "[end]\n",
+	    rotate: {
+	    	max_files: 5,
+	    	max_file_size:  10000,
+	    	max_total_size: 100000
+//	    	,rotate_on_start: true
+	    },
 	format: {
     	pre: 'PRE>', // pre: "pre>"   // 'bold' escape sequence
     	time: "[%ld:%d] ",
