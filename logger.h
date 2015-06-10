@@ -1303,10 +1303,17 @@ protected:
 		   : logTarget(buffer_size, id, o, cb, std::move(_delim), readydata), ttyFD(0)  {
 //			outReq.cb = write_cb;
 			_errcmn::err_ev err;
-			if(ttypath)
+
+			if(ttypath) {
+				HEAVY_DBG_OUT("TTY: at open(%s) ", ttypath);
 				ttyFD = ::open(ttypath, O_WRONLY, 0);
-			else
-				ttyFD = ::open("/dev/tty", O_WRONLY, 0);
+			}
+			else {
+				HEAVY_DBG_OUT("TTY: at open(/dev/tty) ", ttypath);
+				ttyFD = ::open("/dev/XXtty", O_WRONLY, 0);
+			}
+
+			HEAVY_DBG_OUT("TTY: past open() ");
 
 			if(ttyFD >= 0) {
 				tty.loop = o->loggerLoop;

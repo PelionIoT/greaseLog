@@ -410,6 +410,9 @@ void GreaseLogger::targetReady(bool ready, _errcmn::err_ev &err, logTarget *t) {
 			ERROR_PERROR("Error on creating target!", err._errno);
 		}
 		ERROR_OUT("Failed to create target: %d\n", t->myId);
+		if(info && info->cb) {
+			info->cb(t->owner,err,info);
+		}
 		// TODO shutdown?
 		delete t;
 	}
@@ -433,7 +436,6 @@ void GreaseLogger::setupDefaultTarget(actionCB cb, target_start_info *i) {
 	// << end test
 	new ttyTarget(size, DEFAULT_TARGET, this, targetReady,std::move(defaultdelim), i);
 }
-
 
 
 void GreaseLogger::start_logger_cb(GreaseLogger *l, _errcmn::err_ev &err, void *d) {
