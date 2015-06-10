@@ -1310,7 +1310,7 @@ protected:
 			}
 			else {
 				HEAVY_DBG_OUT("TTY: at open(/dev/tty) ", ttypath);
-				ttyFD = ::open("/dev/XXtty", O_WRONLY, 0);
+				ttyFD = ::open("/dev/tty", O_WRONLY, 0);
 			}
 
 			HEAVY_DBG_OUT("TTY: past open() ");
