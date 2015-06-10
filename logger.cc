@@ -130,7 +130,8 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
     							if((LIST->list[n].levelMask & l->m.level)) {
     								if(LIST->list[n].targetId == 0) {
     			    					//        						DBG_OUT("write out: %s",l->buf.handle.base);
-    									GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,(uint32_t) l->buf.used,l->m, &LIST->list[n]);
+    									if(GreaseLogger::LOGGER->defaultTarget)
+    										GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,(uint32_t) l->buf.used,l->m, &LIST->list[n]);
     									wrote = true;
     								} else
     								if(GreaseLogger::LOGGER->targets.find(LIST->list[n].targetId, t)) {
@@ -146,7 +147,7 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
     						}
     					}
     				}
-    				if(!wrote) {
+    				if(!wrote && GreaseLogger::LOGGER->defaultTarget) {
         				GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,l->buf.used,l->m,&GreaseLogger::LOGGER->defaultFilter);
         			}
 //        			}
@@ -165,9 +166,13 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
 		    		t = GreaseLogger::LOGGER->getTarget(req.d);
 		    	else
 		    		t = GreaseLogger::LOGGER->defaultTarget;
-		    	assert(t);
-				DBG_OUT("TARGET_ROTATE_BUFFER [%d]", req.auxInt);
-				t->flushAll(false);
+//		    	assert(t);
+		    	if(t) {
+					DBG_OUT("TARGET_ROTATE_BUFFER [%d]", req.auxInt);
+					t->flushAll(false);
+		    	} else {
+		    		DBG_OUT("No target!");
+		    	}
 //		    	t->flush(req.auxInt);
 		    }
 			break;
@@ -177,11 +182,14 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
 		    		t = GreaseLogger::LOGGER->getTarget(req.d);
 		    	else
 		    		t = GreaseLogger::LOGGER->defaultTarget;
-		    	assert(t);
-				DBG_OUT("WRITE_TARGET_OVERFLOW");
-				t->flushAll();
-				singleLog *big = (singleLog *) req.aux;
-				t->writeAsync(big);
+		    	if(t) {
+			    	DBG_OUT("WRITE_TARGET_OVERFLOW");
+					t->flushAll();
+					singleLog *big = (singleLog *) req.aux;
+					t->writeAsync(big);
+		    	} else {
+		    		DBG_OUT("No target!");
+		    	}
 //				delete big; // handled by callback
 
 	//			t->writeAsync() //overflowBuf
@@ -399,7 +407,7 @@ void GreaseLogger::targetReady(bool ready, _errcmn::err_ev &err, logTarget *t) {
 		}
 	} else {
 		if(err.hasErr()) {
-			ERROR_PERROR("Error on creating target: ", err._errno);
+			ERROR_PERROR("Error on creating target!", err._errno);
 		}
 		ERROR_OUT("Failed to create target: %d\n", t->myId);
 		// TODO shutdown?
@@ -411,18 +419,19 @@ void GreaseLogger::targetReady(bool ready, _errcmn::err_ev &err, logTarget *t) {
 
 
 void GreaseLogger::setupDefaultTarget(actionCB cb, target_start_info *i) {
-//	if(defaultTarget->_log_fd == GREASE_STDOUT) {
 	delim_data defaultdelim;
 	defaultdelim.delim.sprintf("\n");
 	i->cb = cb;
 	this->Opts.lock();
 	int size = this->Opts.bufferSize;
 	this->Opts.unlock();
+
+	// test - test for failure of ttyTarget >>
+//	_errcmn::err_ev err;
+//	err.setError(65001,"Test");
+//	cb(this,err,i);
+	// << end test
 	new ttyTarget(size, DEFAULT_TARGET, this, targetReady,std::move(defaultdelim), i);
-//	} else {
-//		ERROR_OUT("Unsupported default output!");
-//		defaultTarget->_log_fd = GREASE_BAD_FD;
-//	}
 }
 
 
@@ -440,12 +449,14 @@ void GreaseLogger::start_logger_cb(GreaseLogger *l, _errcmn::err_ev &err, void *
 			const unsigned argc = 1;
 			Local<Value> argv[argc];
 			if(!info->targetStartCB->IsUndefined()) {
-				if(!err.hasErr()) {
-					info->targetStartCB->Call(Context::GetCurrent()->Global(),0,NULL);
-				} else {
-					argv[0] = _errcmn::err_ev_to_JS(err, "Default target startup error: ")->ToObject();
-					info->targetStartCB->Call(Context::GetCurrent()->Global(),1,argv);
+				if(err.hasErr()) {
+					ERROR_OUT("Error on starting default target. greaseLog starting anyway...\n");
 				}
+				info->targetStartCB->Call(Context::GetCurrent()->Global(),0,NULL);
+//				else {
+//					argv[0] = _errcmn::err_ev_to_JS(err, "Default target startup error: ")->ToObject();
+//					info->targetStartCB->Call(Context::GetCurrent()->Global(),1,argv);
+//				}
 			}
 		}
 	}
@@ -760,7 +771,7 @@ Handle<Value> GreaseLogger::ModifyDefaultTarget(const Arguments& args) {
 				targ = new fileTarget(size, DEFAULT_TARGET, GreaseLogger::LOGGER, flags, mode, v8str.operator *(), std::move(defaultdelim), i, targetReady);
 
 		} else {
-			if(jsDelim->IsString()) {
+			if(jsDelim->IsString() && targ) {
 				v8::String::Utf8Value v8str(jsDelim);
 				targ->delim.setDelim(v8str.operator *(),v8str.length());
 			}
@@ -769,7 +780,7 @@ Handle<Value> GreaseLogger::ModifyDefaultTarget(const Arguments& args) {
 
 		Local<Value> jsFormat = jsTarg->Get(String::New("format"));
 
-		if(jsFormat->IsObject()) {
+		if(jsFormat->IsObject() && targ) {
 			Local<Object> jsObj = jsFormat->ToObject();
 			Local<Value> jsKey = jsObj->Get(String::New("pre"));
 			if(jsKey->IsString()) {
