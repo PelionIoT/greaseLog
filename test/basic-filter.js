@@ -117,10 +117,15 @@ logger.addTarget({
 
 
 		for(var n=0;n<1000;n++) {
-				logger.debug("....DEBUG(1)....");
-			logger.debug('Eds', "....DEBUG(2)....");			
-			logger.debug('special.js','Eds', "....DEBUG(3)....");			
-			logger.debug('special.js',undefined, "....DEBUG(4)....");				 // should go to file only...
+			if(n%2 > 0) {
+				logger.disableTarget(callback_targ_id);
+			} else {
+				logger.enableTarget(callback_targ_id);
+			}
+			logger.debug("....DEBUG(1) "+n+"....");
+			logger.debug('Eds', "....DEBUG(2) "+n+"....");			
+			logger.debug('special.js','Eds', "....DEBUG(3) "+n+"....");			
+			logger.debug('special.js',undefined, "....DEBUG(4)"+n+"....");				 // should go to file only...
 			logger.error("....ERROR....");
 			logger.log(" log log log");
 			logger.debug({ignores:callback_targ_id},undefined,'Eds'," NO-CALLBACK NO-CALLBACK");

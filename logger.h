@@ -890,6 +890,8 @@ protected:
 
 
 	class logTarget {
+	protected:
+		bool _disabled;
 	public:
 		typedef void (*targetReadyCB)(bool ready, _errcmn::err_ev &err, logTarget *t);
 		targetReadyCB readyCB;
@@ -919,6 +921,20 @@ protected:
 		int bankSize;
 		GreaseLogger *owner;
 		uint32_t myId;
+
+		bool isDisableWrites() {
+			bool ret = false;
+			uv_mutex_lock(&writeMutex);
+			ret = _disabled;
+			uv_mutex_unlock(&writeMutex);
+			return ret;
+		}
+
+		void disableWrites(bool v) {
+			uv_mutex_lock(&writeMutex);
+			_disabled = v;
+			uv_mutex_unlock(&writeMutex);
+		}
 
 		logTarget(int buffer_size, uint32_t id, GreaseLogger *o,
 				targetReadyCB cb, delim_data _delim, target_start_info *readydata);
@@ -1109,6 +1125,12 @@ protected:
 			static __thread char footer_buffer[GREASE_MAX_PREFIX_HEADER];
 			static __thread int len_header_buffer;
 			static __thread int len_footer_buffer;
+
+			bool dropout = false;
+			uv_mutex_lock(&writeMutex);
+			dropout = _disabled;
+			uv_mutex_unlock(&writeMutex);
+			if(dropout) return;    // if the logTarget is disabled, ignore the write()
 
 			// its huge. do an overflow request now, and move on.
 			if(bankSize < (len+GREASE_MAX_PREFIX_HEADER)) {
@@ -1927,6 +1949,8 @@ public:
     // creates a new pseduo-terminal for use with TTY targets
     static Handle<Value> createPTS(const Arguments& args);
 
+    static Handle<Value> DisableTarget(const Arguments& args);
+    static Handle<Value> EnableTarget(const Arguments& args);
 
     static Handle<Value> Log(const Arguments& args);
     static Handle<Value> LogSync(const Arguments& args);

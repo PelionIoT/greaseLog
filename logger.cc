@@ -397,6 +397,7 @@ GreaseLogger::logTarget::~logTarget() {
 
 GreaseLogger::logTarget::logTarget(int buffer_size, uint32_t id, GreaseLogger *o,
 		targetReadyCB cb, delim_data _delim, target_start_info *readydata) :
+		_disabled(false),
 		readyCB(cb),                  // called when the target is ready or has failed to setup
 		readyData(readydata),
 		logCallbackSet(false),
@@ -1241,11 +1242,51 @@ Handle<Value> GreaseLogger::LogSync(const Arguments& args) {
 	return scope.Close(Undefined());
 }
 
+
+Handle<Value> GreaseLogger::DisableTarget(const Arguments& args) {
+	HandleScope scope;
+	GreaseLogger *l = GreaseLogger::setupClass();
+	if(args.Length() > 0 && args[0]->IsUint32()){
+		uint32_t tnum = (uint32_t) args[0]->Uint32Value();
+		logTarget *t = NULL;
+		if(l->targets.find(tnum,t)) {
+			t->disableWrites(true);
+			return scope.Close(True());
+		} else {
+			ERROR_OUT("grease.disableTarget(%d) Bad parameters.\n", tnum);
+			return scope.Close(False());
+		}
+	} else {
+		ERROR_OUT("grease.disableTarget() Bad parameters.\n");
+		return scope.Close(False());
+	}
+}
+
+Handle<Value> GreaseLogger::EnableTarget(const Arguments& args) {
+	HandleScope scope;
+	GreaseLogger *l = GreaseLogger::setupClass();
+	if(args.Length() > 0 && args[0]->IsUint32()){
+		uint32_t tnum = (uint32_t) args[0]->Uint32Value();
+		logTarget *t = NULL;
+		if(l->targets.find(tnum,t)) {
+			t->disableWrites(false);
+			return scope.Close(True());
+		} else {
+			ERROR_OUT("grease.enableTarget(%d) Unknown target.\n", tnum);
+			return scope.Close(False());
+		}
+	} else {
+		ERROR_OUT("grease.enableTarget() Bad parameters.\n");
+		return scope.Close(False());
+	}
+}
+
+
 Handle<Value> GreaseLogger::Flush(const Arguments& args) {
 	HandleScope scope;
 	GreaseLogger *l = GreaseLogger::setupClass();
-	if(args.Length() > 1 && args[0]->Int32Value()){
-		uint32_t tnum = (uint32_t) args[0]->Int32Value();
+	if(args.Length() > 1 && args[0]->IsUint32()){
+		uint32_t tnum = (uint32_t) args[0]->Uint32Value();
 		logTarget *t = NULL;
 		if(l->targets.find(tnum,t)) {
 			t->flushAll();
@@ -1346,6 +1387,9 @@ void GreaseLogger::Init() {
 	tpl->InstanceTemplate()->Set(String::NewSymbol("flush"), FunctionTemplate::New(Flush)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("logSync"), FunctionTemplate::New(LogSync)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("log"), FunctionTemplate::New(Log)->GetFunction());
+
+	tpl->InstanceTemplate()->Set(String::NewSymbol("enableTarget"), FunctionTemplate::New(EnableTarget)->GetFunction());
+	tpl->InstanceTemplate()->Set(String::NewSymbol("disableTarget"), FunctionTemplate::New(DisableTarget)->GetFunction());
 
 	tpl->InstanceTemplate()->Set(String::NewSymbol("createPTS"), FunctionTemplate::New(createPTS)->GetFunction());
 

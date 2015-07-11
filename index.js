@@ -316,7 +316,8 @@ var setup = function(options) {
 	};
 
 	this.modifyDefaultTarget = instance.modifyDefaultTarget;
-
+	this.enableTarget = instance.enableTarget;
+	this.disableTarget = instance.disableTarget;
 }
 
 
