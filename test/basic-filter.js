@@ -11,6 +11,9 @@ var util = require('util');
 
 var N = 0;
 
+var callback_targ_id = 0;
+var file_targ_id = 0;
+
 var testCallback = function(str,id) {
 	var entries = str.split("ϐ");      // use special char to separate entries...
 	for(var n=0;n<entries.length;n++)
@@ -34,6 +37,7 @@ logger.addTarget({
 // //	    	,rotate_on_start: true
 // 	    }
 	},function(targetid,err){
+		callback_targ_id = targetid;
 		if(err) {
 			console.log("error: "+ util.inspect(err));
 		} else {
@@ -75,7 +79,7 @@ logger.addTarget({
 		// //	    	,rotate_on_start: true
 		// 	    }
 			},function(tid2,err){
-
+				file_targ_id = tid2;
 				if(err) {
 					console.log("error: "+ util.inspect(err));
 				} else {
@@ -89,6 +93,12 @@ logger.addTarget({
 						target: tid2,
 						mask: logger.LEVELS.debug,
 						tag: 'Eds'
+					});
+					console.log("added filter: " + ret);
+					var ret = logger.addFilter({ 
+						target: tid2,
+						mask: logger.LEVELS.debug,
+						origin: 'special.js'
 					});
 					console.log("added filter: " + ret);
 					var ret = logger.addFilter({ 
@@ -109,15 +119,16 @@ logger.addTarget({
 		for(var n=0;n<1000;n++) {
 				logger.debug("....DEBUG(1)....");
 			logger.debug('Eds', "....DEBUG(2)....");			
+			logger.debug('special.js','Eds', "....DEBUG(3)....");			
+			logger.debug('special.js',undefined, "....DEBUG(4)....");				 // should go to file only...
 			logger.error("....ERROR....");
 			logger.log(" log log log");
+			logger.debug({ignores:callback_targ_id},undefined,'Eds'," NO-CALLBACK NO-CALLBACK");
+			logger.debug('Eds'," CALLBACK CALLBACK ");
+			logger.debug({ignores:callback_targ_id},undefined,'Eds'," NO-CALLBACK -> File ");	      // FIXME - no working
 			logger.trace("test");
 			logger.trace({stuff:"stuff"},"dumb idea"); // a poor way to log - slower
 			logger.log("slow", "uses","util.format()","style","logging");
-			// console.log("....DEBUG....");
-			// console.log('Eds', "....DEBUG....");			
-			// console.log("....ERROR....");
-			// console.log(" log log log");
 			N--;
 		}
 

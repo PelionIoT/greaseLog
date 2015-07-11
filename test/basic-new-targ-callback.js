@@ -46,8 +46,11 @@ var N = 0;
 // 		logger.error("************ LAST **********");
 // 	});
 
+var count_cbs = 0; // let's count callbacks for fun
+
 var testCallback = function(str,id) {
-	console.log("CB (" + id + ")>" + str + "<");
+	count_cbs++;
+	console.log("CB (" + id + ","+count_cbs+")>" + str + "<");
 }
 
 logger.addTarget({

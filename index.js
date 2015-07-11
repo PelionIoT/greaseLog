@@ -140,6 +140,7 @@ var setup = function(options) {
 	/**
 	 * Creates the user's log.LEVEL functions
 	 * forms
+	 * log.LEVEL(options,origin,tag,message)  options = {object}
 	 * log.LEVEL(origin,tag,message)
 	 * log.LEVEL(tag,message)
 	 * log.LEVEL(message)
@@ -162,7 +163,8 @@ var setup = function(options) {
 							args[n] = arguments[n];
 						var d = getStack();
 //						var stk = util.format.apply(undefined,args);
-						if(typeof arguments[0] !== 'string' || arguments.length > 3) {
+//						if((typeof arguments[0] !== 'string' || arguments.length > 4)&&(!(typeof arguments[0] !== 'object' && arguments.length == 4))) {
+						if(typeof arguments[0] !== 'string' || arguments.length > 4) {
 							var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
 							for(var n=0;n<arguments.length;n++) {
 								if(typeof arguments[n] !== 'string')
@@ -192,7 +194,7 @@ var setup = function(options) {
 							return; // fast track out - if this log function is turned off
 						}
 						// a caller used the log.X function with util.format style parameters						
-						if(typeof arguments[0] !== 'string' || arguments.length > 3) {
+						if((typeof arguments[0] !== 'string' || arguments.length > 4) && (!(typeof arguments[0] == 'object' && arguments.length == 4))) {
 							var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
 							for(var n=0;n<arguments.length;n++) {
 								if(typeof arguments[n] !== 'string')
@@ -202,7 +204,9 @@ var setup = function(options) {
 							}
 							self._log(_n,s);
 						} else {
-							if(arguments.length > 2)
+							if(arguments.length > 3)
+								self._log(_n,arguments[3],arguments[2],arguments[1],arguments[0]);
+							else if(arguments.length == 3)
 								self._log(_n,arguments[2],arguments[1],arguments[0]);
 							else if(arguments.length == 2)
 								self._log(_n,arguments[1],arguments[0]);
@@ -262,7 +266,7 @@ var setup = function(options) {
 	 * @param {string*} origin 
 	 * @return {[type]} [description]
 	 */
-	this._log = function(level,message,tag,origin) {
+	this._log = function(level,message,tag,origin,extras) {
 		var	originN = undefined;
 		if(origin)
 			originN = getOriginId(origin);
@@ -270,7 +274,7 @@ var setup = function(options) {
 		if(tag)
 			tagN = getTagId(tag);
 //		console.log(""+message+","+level + ","+tagN+","+originN);
-		instance.log(message,level,tagN,originN);
+		instance.log(message,level,tagN,originN,extras);
 	}
 
 

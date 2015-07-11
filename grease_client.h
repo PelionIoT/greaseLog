@@ -48,15 +48,39 @@ typedef uint32_t TagId;        // id is always > 0
 typedef uint32_t LevelMask;    // id is always > 0
 typedef uint32_t RawLogLen;    // len of a raw log buffer into a sink
 
+// the good ole container_of macro...
+//#define grease_container_of(ptr, type, member) ({              \
+//        const typeof(((type *)0)->member ) *__mptr = (ptr);    \
+//        (type *)((char *)__mptr - offsetof(type,member) );})
+// same as this: (http://www.widecodes.com/0QmVePUkeU/kernels-containerof-any-way-to-make-it-iso-conforming.html)
+#define grease_container_of(ptr, type, member) \
+                      ((type *) ((char *)(ptr) - offsetof(type, member)))
+
+
 typedef struct logMeta_t {   // meta data for each log entry
 	int32_t tag;    // 0 means no tag
 	uint32_t level;  // 0 means no level
 	int32_t origin; // 0 means no origin
 	uint32_t target; // 0 means default target
+	uint32_t extras; // if not zero, then the meta is wrapped by an extras container (extra_logMeta)
 	// internal
 	FilterHash _cached_hash[3]; // used internally - so we don't compute this so many times
 	void *_cached_lists[4];
 } logMeta;
+
+#define MAX_IGNORE_LIST 10
+
+typedef struct extra_logMeta_t {
+	logMeta m;
+	TargetId ignore_list[MAX_IGNORE_LIST+1]; // 0 terminated list of ignored targets
+	// any other stuff later needed...
+} extra_logMeta;
+
+
+#define META_HAS_IGNORES(m) ( m.extras != 0 )
+#define META_HAS_EXTRAS(m) ( m.extras != 0 )
+#define META_IGNORE_LIST(s) grease_container_of(&s,struct extra_logMeta_t,m)->ignore_list
+#define META_WITH_EXTRAS(s) grease_container_of(&s,struct extra_logMeta_t,m)
 
 extern const logMeta __noMetaData;
 
@@ -82,7 +106,6 @@ extern const logMeta __noMetaData;
 #define GREASE_LEVEL_USER2   0x80
 
 extern int (*grease_log)(const logMeta *f, const char *s, RawLogLen len);
-
 
 extern const logMeta __noMetaData;
 extern const uint32_t __grease_preamble;

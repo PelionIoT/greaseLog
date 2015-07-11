@@ -100,6 +100,17 @@ bool GreaseLogger::sift(logMeta &f) { // returns true, then the logger should lo
 		else
 			ret = true;
 
+//		if(ret && META_HAS_IGNORES(f)) {
+//			TargetId ignore_list = META_IGNORE_LIST(f);
+//			int x = 0;
+//			while(x < MAX_IGNORE_LIST) {
+//				if(ignore_list[x] == 0) {
+//					break;
+//				}
+//				x++;
+//			}
+//		}
+
 		uv_mutex_unlock(&modifyFilters);
 	} else
 		ret = true;
@@ -111,6 +122,7 @@ GreaseLogger *GreaseLogger::LOGGER = NULL;
 void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) {
 	GreaseLogger::internalCmdReq req;
 	logTarget *t = NULL;
+	bool ignore = false;
 	while(GreaseLogger::LOGGER->internalCmdQueue.removeMv(req)) {
     	switch(req.c) {
     	case NEW_LOG:
@@ -119,24 +131,38 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
     			singleLog *l = (singleLog *) req.aux;
     			assert(l);
 //    			FilterList *list = NULL;
-    			if(GreaseLogger::LOGGER->sift(l->m)) { // should always be true (checked in v8 thread)
+    			if(GreaseLogger::LOGGER->sift(l->meta.m)) { // should always be true (checked in v8 thread)
     				bool wrote = false;
     				for(int i=0;i<4;i++) {
-    					FilterList *LIST = META_GET_LIST(l->m,i);
-    					if (LIST && LIST->valid(l->m.level)) {
+    					FilterList *LIST = META_GET_LIST(l->meta.m,i);
+    					if (LIST && LIST->valid(l->meta.m.level)) {
     						int n = 0;
     						while(LIST->list[n].id != 0) {
     							logTarget *t = NULL;
-    							if((LIST->list[n].levelMask & l->m.level)) {
+    							ignore = false;
+    							if((LIST->list[n].levelMask & l->meta.m.level)) {
+    								if(META_HAS_IGNORES(l->meta.m)) {
+    									int x = 0;
+    									while(x < MAX_IGNORE_LIST) {
+    										if(l->meta.ignore_list[x] == 0) { // 0 tells end of list
+    											break;
+    										}
+    										if(l->meta.ignore_list[x] == LIST->list[n].targetId) {
+    											ignore = true;
+    											break;
+    										}
+    										x++;
+    									}
+    								}
     								if(LIST->list[n].targetId == 0) {
     			    					//        						DBG_OUT("write out: %s",l->buf.handle.base);
     									if(GreaseLogger::LOGGER->defaultTarget)
-    										GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,(uint32_t) l->buf.used,l->m, &LIST->list[n]);
+    										GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,(uint32_t) l->buf.used,l->meta.m, &LIST->list[n]);
     									wrote = true;
     								} else
-    								if(GreaseLogger::LOGGER->targets.find(LIST->list[n].targetId, t)) {
+    								if(!ignore && GreaseLogger::LOGGER->targets.find(LIST->list[n].targetId, t)) {
     			    					//        						DBG_OUT("write out: %s",l->buf.handle.base);
-        								t->write(l->buf.handle.base,(uint32_t) l->buf.used,l->m, &LIST->list[n]);
+        								t->write(l->buf.handle.base,(uint32_t) l->buf.used,l->meta.m, &LIST->list[n]);
         								wrote = true;
     								} else {
     			    					//        						DBG_OUT("Orphaned target id: %d\n",list->list[n].targetId);
@@ -148,7 +174,7 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
     					}
     				}
     				if(!wrote && GreaseLogger::LOGGER->defaultTarget) {
-        				GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,l->buf.used,l->m,&GreaseLogger::LOGGER->defaultFilter);
+        				GreaseLogger::LOGGER->defaultTarget->write(l->buf.handle.base,l->buf.used,l->meta.m,&GreaseLogger::LOGGER->defaultFilter);
         			}
 //        			}
 //        			else {  // write out to default target if the list does not apply to this level
@@ -1131,33 +1157,58 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 /**
  * logstring and level manadatory
  * all else optional
- * log(message(number), level{number},tag{number},origin{number})
+ * log(message(number), level{number},tag{number},origin{number},extras{object})
+ *
+ * extras = {
+ *    .ignores = {number|array}
+ * }
  * @method log
  *
  */
 Handle<Value> GreaseLogger::Log(const Arguments& args) {
-	static logMeta meta; // static - this call is single threaded from node.
-	ZERO_LOGMETA(meta);
+	static extra_logMeta meta; // static - this call is single threaded from node.
+	ZERO_LOGMETA(meta.m);
 	HandleScope scope;
 	uint32_t target = DEFAULT_TARGET;
 	if(args.Length() > 1 && args[0]->IsString() && args[1]->IsInt32()){
 		GreaseLogger *l = GreaseLogger::setupClass();
 		v8::String::Utf8Value v8str(args[0]->ToString());
-		meta.level = (uint32_t) args[1]->Int32Value(); // level
+		meta.m.level = (uint32_t) args[1]->Int32Value(); // level
 
 		if(args.Length() > 2 && args[2]->IsInt32()) // tag
-			meta.tag = (uint32_t) args[2]->Int32Value();
+			meta.m.tag = (uint32_t) args[2]->Int32Value();
 		else
-			meta.tag = 0;
+			meta.m.tag = 0;
 
 		if(args.Length() > 3 && args[3]->IsInt32()) // origin
-			meta.origin = (uint32_t) args[3]->Int32Value();
+			meta.m.origin = (uint32_t) args[3]->Int32Value();
 		else
-			meta.origin = 0;
+			meta.m.origin = 0;
 
-		FilterList *list = NULL;
-		if(l->sift(meta)) {
-			l->_log(meta,v8str.operator *(),v8str.length());
+		if(l->sift(meta.m)) {
+			if(args.Length() > 4 && args[4]->IsObject()) {
+				Local<Object> jsObj = args[4]->ToObject();
+				Local<Value> val = jsObj->Get(String::New("ignores"));
+				if(val->IsArray()) {
+					Local<Array> array = v8::Local<v8::Array>::Cast(val);
+					uint32_t i = 0;
+					for (i=0 ; i < array->Length() ; ++i) {
+					  const Local<Value> value = array->Get(i);
+					  if(i >= MAX_IGNORE_LIST) {
+						  break;
+					  } else {
+						  meta.ignore_list[i] = value->Uint32Value();
+					  }
+					}
+					meta.ignore_list[i] = 0;
+				} else if(val->IsUint32()) {
+					meta.ignore_list[0] = val->Uint32Value();
+					meta.ignore_list[1] = 0;
+				}
+				meta.m.extras = 1;
+			}
+			FilterList *list = NULL;
+			l->_log(meta.m,v8str.operator *(),v8str.length());
 		}
 	}
 	return scope.Close(Undefined());
@@ -1216,7 +1267,12 @@ int GreaseLogger::_log( const logMeta &meta, const char *s, int len) { // intern
 	if(masterBufferAvail.remove(l)) {
 		internalCmdReq req(NEW_LOG);
 		l->buf.memcpy(s,len);
-		l->m = meta;
+		if(META_HAS_IGNORES(meta)) {
+			extra_logMeta *extra = META_WITH_EXTRAS(meta);
+			memcpy(&l->meta, extra, sizeof(extra_logMeta));
+		} else {
+			l->meta.m = meta;
+		}
 		req.aux = l;
 		if(internalCmdQueue.addMvIfRoom(req))
 			uv_async_send(&asyncInternalCommand);

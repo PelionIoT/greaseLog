@@ -285,16 +285,18 @@ public:
 
 	class singleLog final {
 	public:
-		logMeta m;
+		extra_logMeta meta;
 		heapBuf buf;
 		singleLog() = delete;
-		singleLog(const char *d, int l, const logMeta &_m) : m(_m), buf(d,l) {}
-		singleLog(int len) : m(), buf(len) {
-			ZERO_LOGMETA(m);
+		singleLog(const char *d, int l, const logMeta &_m) : meta(), buf(d,l) {
+			meta.m = _m;
+		}
+		singleLog(int len) : meta(), buf(len) {
+			ZERO_LOGMETA(meta.m);
 		}
 		void clear() {
 			buf.used = 0;
-			ZERO_LOGMETA(m);
+			ZERO_LOGMETA(meta.m);
 		}
 	};
 
