@@ -88,8 +88,8 @@ var setup = function(options) {
 		if(options.do_trace !== undefined) do_trace = options.do_trace;
 	}
 
-//	console.dir(levels);
-
+	//	console.dir(levels);
+	this.LEVELS_names_only = {};  // does not include 'ALL' (or other stuff like this)
 	this.LEVELS = {};
 	this.LEVELS.ALL = 0xFFFFFFFF; // max uint32_t
 	this.MASK_OUT = 0;
@@ -99,6 +99,7 @@ var setup = function(options) {
 		if(!this[levelsK[n]]) {
 			var N = levels[levelsK[n]];
 			var name = levelsK[n];
+			this.LEVELS_names_only[name] = N;
 			this.LEVELS[name] = N;  // a copy, used for caller when creating filters
 			this[name] = function(){
 			}

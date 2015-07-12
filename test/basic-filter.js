@@ -53,6 +53,7 @@ logger.addTarget({
 				target: targetid,
 				mask: logger.LEVELS.debug,
 				tag: 'Eds'
+//				,disable: true
 			});
 			console.log("added filter: " + ret);
 			var disable_this_filter = logger.addFilter({ 

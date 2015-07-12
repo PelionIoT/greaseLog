@@ -873,10 +873,12 @@ Handle<Value> GreaseLogger::AddFilter(const Arguments& args) {
 		Local<Object> jsObj = args[0]->ToObject();
 
 		bool ok = false;
+		bool set_disable = false;
 		Local<Value> jsTag = jsObj->Get(String::New("tag"));
 		Local<Value> jsOrigin = jsObj->Get(String::New("origin"));
 		Local<Value> jsTarget = jsObj->Get(String::New("target"));
 		Local<Value> jsMask = jsObj->Get(String::New("mask"));
+		Local<Value> jsDisable = jsObj->Get(String::New("disable"));
 
 		if(jsTag->IsUint32()) {
 			tagId = (TagId) jsTag->Uint32Value();
@@ -897,6 +899,12 @@ Handle<Value> GreaseLogger::AddFilter(const Arguments& args) {
 		} else {
 //			ok = false;
 			targetId = 0;
+		}
+
+		if((!jsDisable.IsEmpty() && !jsDisable->IsUndefined()) && jsDisable->IsBoolean()) {
+			if(jsDisable->IsTrue()) {
+				set_disable = true;
+			}
 		}
 
 		if(!ok) {
@@ -921,6 +929,12 @@ Handle<Value> GreaseLogger::AddFilter(const Arguments& args) {
 		else
 			ret = Boolean::New(false);
 
+		if(set_disable) {
+			Filter *found;
+			if(l->_lookupFilter(originId,tagId,id,found)) {
+				found->_disabled = true;
+			}
+		}
 	} else
 		return ThrowException(Exception::TypeError(String::New("addFilter: bad parameters")));
 	return scope.Close(ret);
