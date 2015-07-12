@@ -31,6 +31,7 @@ extern "C" {
 #define GREASE_RAWBUF_MIN_SIZE (GREASE_CLIENT_HEADER_SIZE + (sizeof(logMeta) + (sizeof(uint32_t)	)) )
 
 #define GREASE_LOG_SO_NAME "greaseLog.node"
+#define GREASE_META_HASHLIST_CACHE_SIZE 4
 
 // for internal debugging
 #ifdef GREASE_DEBUG_MODE
@@ -65,7 +66,7 @@ typedef struct logMeta_t {   // meta data for each log entry
 	uint32_t extras; // if not zero, then the meta is wrapped by an extras container (extra_logMeta)
 	// internal
 	FilterHash _cached_hash[3]; // used internally - so we don't compute this so many times
-	void *_cached_lists[4];
+	void *_cached_lists[GREASE_META_HASHLIST_CACHE_SIZE];
 } logMeta;
 
 #define MAX_IGNORE_LIST 10

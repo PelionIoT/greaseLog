@@ -14,6 +14,8 @@ var N = 0;
 var callback_targ_id = 0;
 var file_targ_id = 0;
 
+var disable_this_filter = 0;
+
 var testCallback = function(str,id) {
 	var entries = str.split("ϐ");      // use special char to separate entries...
 	for(var n=0;n<entries.length;n++)
@@ -53,12 +55,19 @@ logger.addTarget({
 				tag: 'Eds'
 			});
 			console.log("added filter: " + ret);
-			var ret = logger.addFilter({ 
+			var disable_this_filter = logger.addFilter({ 
 				target: targetid,
 				mask: logger.LEVELS.debug,
 				tag: 'Eds',
 				origin: 'special.js'
 			});
+			if(!disable_this_filter) {
+				console.log("Failure of logger.addFilter");
+				process.exit(1);
+			} else {
+				console.log("disable_this_filter = " + disable_this_filter);
+			}
+
 			console.log("added filter: " + ret);
 		}
 
@@ -111,34 +120,78 @@ logger.addTarget({
 
 
 ///////////
-							console.time('logit');
+					console.time('logit');
 		logger.error("************ FIRST **********");
 
 
+		var disabled = false;
 
-		for(var n=0;n<1000;n++) {
-			if(n%2 > 0) {
-				logger.disableTarget(callback_targ_id);
+		var N = 1000;
+
+		var do_log = function()  {
+
+
+
+
+			var n = 10;
+			while(N > 0 && n > 0) {
+				if(N%2 > 0) {
+					logger.disableTarget(callback_targ_id);
+				} else {
+					logger.enableTarget(callback_targ_id);
+				}
+
+				if(N > 960 && N < 990 && !disabled) {
+					logger.debug("MODIFYING FILTER - disable=true");	
+					logger.modifyFilter({
+						id:disable_this_filter,
+						tag: 'Eds',
+						origin: 'special.js',
+						disable: true
+					});
+					disabled = true;
+				}
+
+				if(N < 960 && disabled) {
+					logger.debug("MODIFYING FILTER - disable=false");
+					logger.modifyFilter({
+						id:disable_this_filter,
+						tag: 'Eds',
+						origin: 'special.js',
+						disable: false
+					});
+					disabled = false;
+				}
+
+				logger.debug("....DEBUG(1) "+N+"....");
+				logger.debug('Eds', "....DEBUG(2) "+N+"....");			
+				logger.debug('special.js','Eds', "....DEBUG(3) "+N+"....");			
+				logger.debug('special.js',undefined, "....DEBUG(4)"+N+"....");				 // should go to file only...
+				logger.error("....ERROR....");
+				logger.log(" log log log");
+				logger.debug({ignores:callback_targ_id},undefined,'Eds'," NO-CALLBACK NO-CALLBACK");
+				logger.debug('Eds'," CALLBACK CALLBACK ");
+				logger.debug({ignores:callback_targ_id},undefined,'Eds'," NO-CALLBACK -> File ");	      // FIXME - no working
+				logger.trace("test");
+				logger.trace({stuff:"stuff"},"dumb idea"); // a poor way to log - slower
+				logger.log("slow", "uses","util.format()","style","logging");
+				N--; n--;
+			} 
+			
+			if(N > 0) {
+				setTimeout(do_log, 200);
 			} else {
-				logger.enableTarget(callback_targ_id);
+				logger.error("************ LAST **********");
 			}
-			logger.debug("....DEBUG(1) "+n+"....");
-			logger.debug('Eds', "....DEBUG(2) "+n+"....");			
-			logger.debug('special.js','Eds', "....DEBUG(3) "+n+"....");			
-			logger.debug('special.js',undefined, "....DEBUG(4)"+n+"....");				 // should go to file only...
-			logger.error("....ERROR....");
-			logger.log(" log log log");
-			logger.debug({ignores:callback_targ_id},undefined,'Eds'," NO-CALLBACK NO-CALLBACK");
-			logger.debug('Eds'," CALLBACK CALLBACK ");
-			logger.debug({ignores:callback_targ_id},undefined,'Eds'," NO-CALLBACK -> File ");	      // FIXME - no working
-			logger.trace("test");
-			logger.trace({stuff:"stuff"},"dumb idea"); // a poor way to log - slower
-			logger.log("slow", "uses","util.format()","style","logging");
-			N--;
 		}
 
-		logger.error("************ LAST **********");
-		console.timeEnd('logit');
+		console.log("Starting log ... 1 second");
+		setTimeout(function(){
+			do_log();			
+		},1000);
+
+
+//		console.timeEnd('logit');
 /////////////////
 			
 

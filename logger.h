@@ -472,6 +472,7 @@ protected:
 
 	class Filter final {
 	public:
+		bool _disabled;
 		FilterId id;
 		LevelMask levelMask;
 		TargetId targetId;
@@ -481,10 +482,11 @@ protected:
 			id = 0;  // an ID of 0 means - empty Filter
 			levelMask = 0;
 			targetId = 0;
+			_disabled = false;
 		};
-		Filter(FilterId id, LevelMask mask, TargetId t) : id(id), levelMask(mask), targetId(t), preFormat(), postFormat() {}
+		Filter(FilterId id, LevelMask mask, TargetId t) : _disabled(false), id(id), levelMask(mask), targetId(t), preFormat(), postFormat() {}
 //		Filter(Filter &&o) : id(o.id), levelMask(o.mask), targetId(o.t) {};
-		Filter(Filter &o) :  id(o.id), levelMask(o.levelMask), targetId(o.targetId) {};
+		Filter(Filter &o) :  _disabled(false), id(o.id), levelMask(o.levelMask), targetId(o.targetId) {};
 		Filter& operator=(Filter& o) {
 			id = o.id;
 			levelMask = o.levelMask;
@@ -509,6 +511,18 @@ protected:
 				if(list[n].id == 0) {
 					bloom |= filter.levelMask;
 					list[n] = filter;
+					ret = true;
+					break;
+				}
+			}
+			return ret;
+		}
+
+		inline bool find(FilterId lookup_id, Filter *&filter) {
+			bool ret = false;
+			for(int n=0;n<MAX_IDENTICAL_FILTERS;n++) {
+				if(list[n].id == lookup_id) {
+					filter = &list[n];
 					ret = true;
 					break;
 				}
@@ -1910,6 +1924,26 @@ protected:
 		return ret;
 	}
 
+	bool _lookupFilter(OriginId origin, TagId tag, FilterId id, Filter *&filter) {
+		uint64_t hash = filterhash(tag,origin);
+		bool ret = false;
+
+		FilterList *list = NULL;
+		Filter *found = NULL;
+
+		if(filterHashTable.find(hash,list)) {
+			list->find(id,found);
+		}
+
+		if(found) {
+			filter = found;
+			ret = true;
+		}
+		return ret;
+	}
+
+
+
 	uv_loop_t *loggerLoop;  // grease uses its own libuv event loop (not node's)
 
 	int _log(const logMeta &meta, const char *s, int len); // internal log cmd
@@ -1939,6 +1973,8 @@ public:
 
     static Handle<Value> AddFilter(const Arguments& args);
     static Handle<Value> RemoveFilter(const Arguments& args);
+    static Handle<Value> ModifyFilter(const Arguments& args);
+
     static Handle<Value> AddTarget(const Arguments& args);
     static Handle<Value> AddSink(const Arguments& args);
 
@@ -1951,6 +1987,7 @@ public:
 
     static Handle<Value> DisableTarget(const Arguments& args);
     static Handle<Value> EnableTarget(const Arguments& args);
+
 
     static Handle<Value> Log(const Arguments& args);
     static Handle<Value> LogSync(const Arguments& args);

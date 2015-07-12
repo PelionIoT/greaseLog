@@ -292,6 +292,15 @@ var setup = function(options) {
 		return instance.addFilter(obj);
 	}
 
+	this.modifyFilter = function(obj) {
+		// use IDs - not strings
+		if(obj.tag)
+			obj.tag = getTagId(obj.tag);
+		if(obj.origin)
+			obj.origin = getOriginId(obj.origin);
+		return instance.modifyFilter(obj);
+	}
+
 	this.createPTS = instance.createPTS;
 
 

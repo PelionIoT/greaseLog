@@ -133,14 +133,14 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
 //    			FilterList *list = NULL;
     			if(GreaseLogger::LOGGER->sift(l->meta.m)) { // should always be true (checked in v8 thread)
     				bool wrote = false;
-    				for(int i=0;i<4;i++) {
+    				for(int i=0;i<GREASE_META_HASHLIST_CACHE_SIZE;i++) {
     					FilterList *LIST = META_GET_LIST(l->meta.m,i);
     					if (LIST && LIST->valid(l->meta.m.level)) {
     						int n = 0;
     						while(LIST->list[n].id != 0) {
     							logTarget *t = NULL;
     							ignore = false;
-    							if((LIST->list[n].levelMask & l->meta.m.level)) {
+    							if(((LIST->list[n].levelMask & l->meta.m.level) > 0) && !LIST->list[n]._disabled) { //if we have a Filter that matches...
     								if(META_HAS_IGNORES(l->meta.m)) {
     									int x = 0;
     									while(x < MAX_IGNORE_LIST) {
@@ -932,6 +932,69 @@ Handle<Value> GreaseLogger::RemoveFilter(const Arguments& args) {
 
 }
 
+Handle<Value> GreaseLogger::ModifyFilter(const Arguments& args) {
+	HandleScope scope;
+	GreaseLogger *l = GreaseLogger::setupClass();
+	FilterId id;
+	TagId tagId = 0;
+	OriginId originId = 0;
+	TargetId targetId = 0;
+	LevelMask mask = ALL_LEVELS;
+	Handle<Value> ret = Boolean::New(false);
+	if(args.Length() > 0 && args[0]->IsObject()) {
+		Local<Object> jsObj = args[0]->ToObject();
+
+		bool ok = false;
+		Local<Value> jsTag = jsObj->Get(String::New("tag"));
+		Local<Value> jsOrigin = jsObj->Get(String::New("origin"));
+		Local<Value> jsTarget = jsObj->Get(String::New("target"));
+		Local<Value> jsMask = jsObj->Get(String::New("mask"));
+		Local<Value> jsDisable = jsObj->Get(String::New("disable"));
+		Local<Value> jsId = jsObj->Get(String::New("id"));
+
+		if(jsTag->IsUint32()) {
+			tagId = (TagId) jsTag->Uint32Value();
+		}
+		if(jsOrigin->IsUint32()) {
+			originId = (OriginId) jsOrigin->Uint32Value();
+		}
+		if(jsMask->IsUint32()) {
+			mask = jsMask->Uint32Value();
+			return ThrowException(Exception::TypeError(String::New("modifyFilter: bad parameters... can't modify mask")));
+		}
+		if(jsId->IsUint32()) {
+			id = (OriginId) jsId->Uint32Value();
+			if(id > 0)
+				ok = true;
+		} else {
+			ok = false;
+		}
+
+		if(!ok) {
+			return ThrowException(Exception::TypeError(String::New("modifyFilter: bad parameters")));
+		}
+
+		Filter *found = NULL;
+		if(ok && l->_lookupFilter(originId,tagId,id,found)) {
+			if((!jsDisable.IsEmpty() && !jsDisable->IsUndefined()) && jsDisable->IsBoolean()) {
+				if(jsDisable->IsTrue()) {
+					found->_disabled = true;
+				} else {
+					found->_disabled = false;
+				}
+			}
+			if(jsTarget->IsUint32()) {
+				found->targetId = (TargetId) jsTarget->Uint32Value();
+			}
+
+			ret = Boolean::New(true);
+		} else
+			ret = Boolean::New(false);
+
+	} else
+		return ThrowException(Exception::TypeError(String::New("modifyFilter: bad parameters")));
+	return scope.Close(ret);
+}
 
 /**
  * obj = {
@@ -1403,6 +1466,8 @@ void GreaseLogger::Init() {
 
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addFilter"), FunctionTemplate::New(AddFilter)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("removeFilter"), FunctionTemplate::New(RemoveFilter)->GetFunction());
+	tpl->InstanceTemplate()->Set(String::NewSymbol("modifyFilter"), FunctionTemplate::New(ModifyFilter)->GetFunction());
+
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addTarget"), FunctionTemplate::New(AddTarget)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("addSink"), FunctionTemplate::New(AddSink)->GetFunction());
 
