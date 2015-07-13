@@ -952,7 +952,6 @@ Handle<Value> GreaseLogger::ModifyFilter(const Arguments& args) {
 	FilterId id;
 	TagId tagId = 0;
 	OriginId originId = 0;
-	TargetId targetId = 0;
 	LevelMask mask = ALL_LEVELS;
 	Handle<Value> ret = Boolean::New(false);
 	if(args.Length() > 0 && args[0]->IsObject()) {

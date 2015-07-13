@@ -68,7 +68,7 @@ var setup = function(options) {
 
 
 	var LEVELS_default = {
-		'info'     : 0x01,
+		'info'     : 0x100,
 		'log'      : 0x01,
 		'error'    : 0x02,
 		'warn'     : 0x04,
