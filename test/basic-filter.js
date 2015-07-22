@@ -11,6 +11,12 @@ var util = require('util');
 
 var N = 0;
 
+var HUGE = "";
+
+for(var n=1000;n>0;n--) {
+	HUGE = HUGE + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123["+n+"] ";
+}
+
 var callback_targ_id = 0;
 var file_targ_id = 0;
 
@@ -102,7 +108,9 @@ logger.addTarget({
 					var ret = logger.addFilter({ 
 						target: tid2,
 						mask: logger.LEVELS.debug,
-						tag: 'Eds'
+						tag: 'Eds',
+						pre: "EDS>",
+						post: "EDS<"
 					});
 					console.log("added filter: " + ret);
 					var ret = logger.addFilter({ 
@@ -142,29 +150,32 @@ logger.addTarget({
 					logger.enableTarget(callback_targ_id);
 				}
 
-				if(N > 960 && N < 990 && !disabled) {
-					logger.debug("MODIFYING FILTER - disable=true");	
-					logger.modifyFilter({
-						id:disable_this_filter,
-						tag: 'Eds',
-						origin: 'special.js',
-						disable: true
-					});
-					disabled = true;
-				}
+				// if(N > 960 && N < 990 && !disabled) {
+				// 	logger.debug("MODIFYING FILTER - disable=true");	
+				// 	logger.modifyFilter({
+				// 		id:disable_this_filter,
+				// 		tag: 'Eds',
+				// 		origin: 'special.js',
+				// 		disable: true
+				// 	});
+				// 	disabled = true;
+				// }
 
-				if(N < 960 && disabled) {
-					logger.debug("MODIFYING FILTER - disable=false");
-					logger.modifyFilter({
-						id:disable_this_filter,
-						tag: 'Eds',
-						origin: 'special.js',
-						disable: false
-					});
-					disabled = false;
-				}
+				// if(N < 960 && disabled) {
+				// 	logger.debug("MODIFYING FILTER - disable=false");
+				// 	logger.modifyFilter({
+				// 		id:disable_this_filter,
+				// 		tag: 'Eds',
+				// 		origin: 'special.js',
+				// 		disable: false
+				// 	});
+				// 	disabled = false;
+				// }
 
 				logger.debug("....DEBUG(1) "+N+"....");
+				if(N == 999) {
+					logger.debug('Eds', "....DEBUG(2) HUGE " + HUGE);								
+				}
 				logger.debug('Eds', "....DEBUG(2) "+N+"....");			
 				logger.debug('special.js','Eds', "....DEBUG(3) "+N+"....");			
 				logger.debug('special.js',undefined, "....DEBUG(4)"+N+"....");				 // should go to file only...

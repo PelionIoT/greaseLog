@@ -203,23 +203,88 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
 		    }
 			break;
 		case WRITE_TARGET_OVERFLOW:
-			{
-		    	if(req.d > 0)
-		    		t = GreaseLogger::LOGGER->getTarget(req.d);
-		    	else
-		    		t = GreaseLogger::LOGGER->defaultTarget;
-		    	if(t) {
-			    	DBG_OUT("WRITE_TARGET_OVERFLOW");
-					t->flushAll();
-					singleLog *big = (singleLog *) req.aux;
-					t->writeAsync(big);
-		    	} else {
-		    		DBG_OUT("No target!");
-		    	}
-//				delete big; // handled by callback
 
-	//			t->writeAsync() //overflowBuf
+			{
+				// process a single log message - this is a large overflow message which is not in the masterBuffer
+				singleLog *l = (singleLog *) req.aux;
+				assert(l);
+				if(GreaseLogger::LOGGER->sift(l->meta.m)) { // should always be true (checked in v8 thread)
+					bool wrote = false;
+					for(int i=0;i<GREASE_META_HASHLIST_CACHE_SIZE;i++) {
+						FilterList *LIST = META_GET_LIST(l->meta.m,i);
+						if (LIST && LIST->valid(l->meta.m.level)) {
+							int n = 0;
+							while(LIST->list[n].id != 0) {
+								logTarget *t = NULL;
+								ignore = false;
+								if(((LIST->list[n].levelMask & l->meta.m.level) > 0) && !LIST->list[n]._disabled) { //if we have a Filter that matches...
+									if(META_HAS_IGNORES(l->meta.m)) {
+										int x = 0;
+										while(x < MAX_IGNORE_LIST) {
+											if(l->meta.ignore_list[x] == 0) { // 0 tells end of list
+												break;
+											}
+											if(l->meta.ignore_list[x] == LIST->list[n].targetId) {
+												ignore = true;
+												break;
+											}
+											x++;
+										}
+									}
+									if(LIST->list[n].targetId == 0) {
+										//        						DBG_OUT("write out: %s",l->buf.handle.base);
+										if(GreaseLogger::LOGGER->defaultTarget) {
+											GreaseLogger::LOGGER->defaultTarget->flushAll();
+											l->incRef();
+											DBG_OUT("writeOverflow to defaultTarget Filter %p",  &LIST->list[n]);
+											GreaseLogger::LOGGER->defaultTarget->writeOverflow(l, &LIST->list[n]);
+										}
+										wrote = true;
+									} else
+									if(!ignore && GreaseLogger::LOGGER->targets.find(LIST->list[n].targetId, t)) {
+										//        						DBG_OUT("write out: %s",l->buf.handle.base);
+										t->flushAll();
+										l->incRef();
+										DBG_OUT("writeOverflow to target %p Filter %p",  t, &LIST->list[n]);
+										t->writeOverflow(l, &LIST->list[n]);
+										wrote = true;
+									} else {
+										//        						DBG_OUT("Orphaned target id: %d\n",list->list[n].targetId);
+									}
+								} else {
+								}
+								n++;
+							}
+						}
+					}
+					if(!wrote && GreaseLogger::LOGGER->defaultTarget) {
+						GreaseLogger::LOGGER->defaultTarget->flushAll();
+						l->incRef();
+						DBG_OUT("writeOverflow to defaultTarget and default Filter");
+						GreaseLogger::LOGGER->defaultTarget->writeOverflow(l,&GreaseLogger::LOGGER->defaultFilter);
+					}
+				}
+				l->decRef(); // we are done with the singleLog
 			}
+
+
+//			{
+//		    	if(req.d > 0)
+//		    		t = GreaseLogger::LOGGER->getTarget(req.d);
+//		    	else
+//		    		t = GreaseLogger::LOGGER->defaultTarget;
+//		    	if(t) {
+//			    	DBG_OUT("WRITE_TARGET_OVERFLOW");
+//					t->flushAll();
+//					singleLog *big = (singleLog *) req.aux;
+//					t->writeAsync(big);
+//		    	} else {
+//		    		DBG_OUT("No target!");
+//		    	}
+////				delete big; // handled by callback
+//
+//	//			t->writeAsync() //overflowBuf
+//			}
 
 			break;
     	case INTERNAL_SHUTDOWN:
@@ -1379,10 +1444,10 @@ int GreaseLogger::_log( const logMeta &meta, const char *s, int len) { // intern
 //	DBG_OUT("meta.level %x",meta.level);
 //	if(len > GREASE_MAX_MESSAGE_SIZE)
 //		return GREASE_OVERFLOW;
-
 	singleLog *l = NULL;
-	if(masterBufferAvail.remove(l)) {
-		internalCmdReq req(NEW_LOG);
+	if(len > Opts.bufferSize) {
+		internalCmdReq req(WRITE_TARGET_OVERFLOW);
+		l = new singleLog(len);
 		l->buf.memcpy(s,len);
 		if(META_HAS_IGNORES(meta)) {
 			extra_logMeta *extra = META_WITH_EXTRAS(meta);
@@ -1396,9 +1461,25 @@ int GreaseLogger::_log( const logMeta &meta, const char *s, int len) { // intern
 		else
 			ERROR_OUT("internalCmdQueue is out of space!! Dropping. \n");
 	} else {
-		ERROR_OUT("masterBuffer is out of space!! Dropping. (%d)\n", masterBufferAvail.remaining());
-	}
+		if(masterBufferAvail.remove(l)) {
+			l->buf.memcpy(s,len);
+			if(META_HAS_IGNORES(meta)) {
+				extra_logMeta *extra = META_WITH_EXTRAS(meta);
+				memcpy(&l->meta, extra, sizeof(extra_logMeta));
+			} else {
+				l->meta.m = meta;
+			}
 
+			internalCmdReq req(NEW_LOG);
+			req.aux = l;
+			if(internalCmdQueue.addMvIfRoom(req))
+				uv_async_send(&asyncInternalCommand);
+			else
+				ERROR_OUT("internalCmdQueue is out of space!! Dropping. \n");
+		} else {
+			ERROR_OUT("masterBuffer is out of space!! Dropping. (%d)\n", masterBufferAvail.remaining());
+		}
+	}
 
 //	if(!list) {
 //		defaultTarget->write(s,len,meta);

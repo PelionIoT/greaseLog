@@ -199,7 +199,8 @@ public:
 //		}
 		explicit heapBuf(int n) : return_cb(NULL), used(0) {
 			handle.len = n;
-			handle.base = (char *) LMALLOC(n);
+			if(n > 0)
+				handle.base = (char *) LMALLOC(n);
 		}
 		void sprintf(const char *format, ... ) {
 			char buffer[512];
@@ -284,19 +285,63 @@ public:
 	};
 
 	class singleLog final {
+	private:
+		int _ref_cnt;
+	protected:
 	public:
 		extra_logMeta meta;
 		heapBuf buf;
-		singleLog() = delete;
-		singleLog(const char *d, int l, const logMeta &_m) : meta(), buf(d,l) {
+		static const int NOT_REFED = -2;  // no reference counting
+		static const int INIT_REF = 1;  // no reference counting
+		singleLog(const char *d, int l, const logMeta &_m) : meta(), buf(d,l), _ref_cnt(NOT_REFED) {
 			meta.m = _m;
 		}
-		singleLog(int len) : meta(), buf(len) {
+		singleLog(int len) : meta(), buf(len), _ref_cnt(NOT_REFED) {
 			ZERO_LOGMETA(meta.m);
 		}
+		singleLog() = delete;
+		static singleLog *heapSingleLog(int len) {
+			singleLog *ret = new singleLog(len);
+			ret->_ref_cnt = INIT_REF;
+			return ret;
+		}
+		static singleLog *heapSingleLog(const char *d, int l, const logMeta &_m) {
+			singleLog *ret = new singleLog(d,l,_m);
+			ret->_ref_cnt = INIT_REF;
+			return ret;
+		}
+//		static singleLog *heapSingleLogEmptyNoRef() {
+//			singleLog *ret = new singleLog(0);
+//			return ret;
+//		}
+//		static singleLog *heapSingleLogEmpty() {
+//			singleLog *ret = new singleLog(0);
+//			ret->_ref_cnt = INIT_REF;
+//			return ret;
+//		}
 		void clear() {
 			buf.used = 0;
+			_ref_cnt = 1;
 			ZERO_LOGMETA(meta.m);
+		}
+		void incRef() {
+			if(_ref_cnt != NOT_REFED) {
+				DBG_OUT("incRef: %p (%d)\n", this, _ref_cnt);
+				_ref_cnt++;
+			}
+		}
+		void decRef() {
+			if(_ref_cnt != NOT_REFED) {
+				DBG_OUT("decRef: %p (%d)\n", this, _ref_cnt);
+				_ref_cnt--;
+				if(_ref_cnt < 1) {
+					DBG_OUT("ref ... delete: %p (%d)\n", this, _ref_cnt);
+					delete this;
+				}
+			}
+		}
+		int getRef() {
+			return _ref_cnt;
 		}
 	};
 
@@ -1088,6 +1133,27 @@ protected:
 			}
 		}
 
+
+		void returnOverflowBuffer(logBuf *b, bool sync = false, bool nocallback = false) {
+			if(!nocallback && logCallbackSet && b->handle.len > 0) {
+				writeCBData cbdat(this,b);
+				if(!owner->v8LogCallbacks.addMvIfRoom(cbdat)) {
+					if(owner->Opts.show_errors)
+						ERROR_OUT(" !!! v8LogCallbacks is full! Can't rotate. Callback will be skipped.");
+				}
+				if(!sync)
+					uv_async_send(&owner->asyncV8LogCallback);
+				else
+					GreaseLogger::_doV8Callback(cbdat);
+			} else {
+				b->clear();
+				availBuffers.add(b);
+			}
+		}
+
+
+
+
 		void setCallback(Local<Function> &func) {
 			uv_mutex_lock(&writeMutex);
 			if(!func.IsEmpty()) {
@@ -1131,7 +1197,7 @@ protected:
 			return ret;
 		}
 
-		void write(const char *s, uint32_t len, const logMeta &m, Filter *filter) {  // called from node thread...
+		void write(const char *s, uint32_t len, const logMeta &m, Filter *filter) {  // called from grease thread...
 			static __thread char header_buffer[GREASE_MAX_PREFIX_HEADER]; // used to make header of log line. for speed it's static. this is __thread
 			                                                              // so when it is called from multiple threads buffers don't conflict
 			                                                              // for a discussion of thread_local (a C++ 11 thing) and __thread (a gcc thing)
@@ -1233,6 +1299,44 @@ protected:
 //			}
 		}
 
+		void writeOverflow(singleLog *log, Filter *filter) {  // called from grease thread...
+
+			bool dropout = false;
+			uv_mutex_lock(&writeMutex);
+			dropout = _disabled;
+			uv_mutex_unlock(&writeMutex);
+			if(dropout) return;    // if the logTarget is disabled, ignore the write()
+
+
+			singleLog *hdr = singleLog::heapSingleLog(GREASE_MAX_PREFIX_HEADER);
+			singleLog *ftr = singleLog::heapSingleLog(GREASE_MAX_PREFIX_HEADER);
+
+			uv_mutex_lock(&writeMutex);
+			int len_header_buffer = putsHeader(hdr->buf.handle.base,(size_t) GREASE_MAX_PREFIX_HEADER,log->meta.m,filter);
+			int len_footer_buffer = putsFooter(ftr->buf.handle.base,(size_t) GREASE_MAX_PREFIX_HEADER-len_header_buffer,filter);
+			uv_mutex_unlock(&writeMutex);
+
+			hdr->buf.handle.len = len_header_buffer;
+			ftr->buf.handle.len = len_footer_buffer;
+			if(len_header_buffer > 0) {
+				writeAsync(hdr);
+			} else
+				delete hdr;
+			writeAsync(log);
+			if(len_footer_buffer > 0) {
+				writeAsync(ftr);
+			} else
+				delete ftr;
+			singleLog *delim_buf = singleLog::heapSingleLog((int) delim.delim.handle.len);
+			if(delim.delim.handle.len > 0) {
+				delim_buf->buf.memcpy(delim.delim.handle.base,(int) delim.delim.handle.len);
+				writeAsync(delim_buf);
+			} else
+				delete delim_buf;
+
+		}
+
+
 		void flushAll(bool _rotate = true, bool nocallbacks = false) {
 			if(_rotate) rotate();
 			while(1) {
@@ -1261,7 +1365,9 @@ protected:
 		// called from Logger thread ONLY
 		virtual void flush(logBuf *b, bool nocallbacks = false) {}; // flush buffer 'n'. This is ansynchronous
 		virtual void flushSync(logBuf *b, bool nocallbacks = false) {}; // flush buffer 'n'. This is ansynchronous
-		virtual void writeAsync(singleLog *b) {};
+		virtual void writeAsync(singleLog *b) {
+			b->decRef(); // dummy call - just clear memory
+		};
 		virtual void writeSync(const char *s, int len, const logMeta &m) {}; // flush buffer 'n'. This is synchronous. Writes now - skips buffering
 		virtual void close() {};
 		virtual void sync() {};
@@ -1289,7 +1395,7 @@ protected:
 		static void write_overflow_cb(uv_write_t* req, int status) {
 			HEAVY_DBG_OUT("overflow_cb");
 			singleLog *b = (singleLog *) req->data;
-			delete b;
+			b->decRef();
 			delete req;
 		}
 
@@ -1527,7 +1633,7 @@ protected:
 				ERROR_PERROR("file: write_overflow_cb() ",req->errorno);
 			}
 			singleLog *b = (singleLog *) req->data;
-			delete b;
+			b->decRef();
 			uv_fs_req_cleanup(req);
 //			delete req;
 		}
@@ -1823,6 +1929,7 @@ protected:
 		}; // flush buffer 'n'. This is ansynchronous
 		void writeAsync(heapBuf *b) {
 			// sechdule v8 callback now
+			// TODO
 		};
 		void writeSync(const char *s, int len) {
 			// call v8 callback now
@@ -2050,7 +2157,7 @@ protected:
     		uv_mutex_init(&modifyTargets);
 
     		for(int n=0;n<PRIMARY_BUFFER_ENTRIES;n++) {
-    			singleLog *l = new singleLog(DEFAULT_BUFFER_SIZE);
+    			singleLog *l = new singleLog(buffer_size);
     			masterBufferAvail.add(l);
     		}
     	}
