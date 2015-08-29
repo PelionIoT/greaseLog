@@ -13,7 +13,7 @@ var N = 0;
 
 var HUGE = "";
 
-for(var n=1000;n>0;n--) {
+for(var n=1000000;n>0;n--) {
 	HUGE = HUGE + "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123["+n+"] ";
 }
 
@@ -172,9 +172,10 @@ logger.addTarget({
 				// 	disabled = false;
 				// }
 
+
 				logger.debug("....DEBUG(1) "+N+"....");
-				if(N == 999) {
-					logger.debug('Eds', "....DEBUG(2) HUGE " + HUGE);								
+				if((N % 7) == 0) {0
+					logger.debug('Eds', "....DEBUG(2)("+N+") HUGE " + HUGE);								
 				}
 				logger.debug('Eds', "....DEBUG(2) "+N+"....");			
 				logger.debug('special.js','Eds', "....DEBUG(3) "+N+"....");			

@@ -619,10 +619,25 @@ void GreaseLogger::callV8LogCallbacks(uv_async_t *h, int status ) {
 void GreaseLogger::_doV8Callback(GreaseLogger::logTarget::writeCBData &data) {
 	const unsigned argc = 2;
 	Local<Value> argv[argc];
-	argv[0] = String::New( data.b->handle.base, (int) data.b->handle.len );
-	argv[1] = Integer::NewFromUnsigned( data.t->myId );
-	data.t->logCallback->Call(Context::GetCurrent()->Global(),1,argv);
-	data.t->finalizeV8Callback(data.b);
+	if(data.b) {
+		argv[0] = String::New( data.b->handle.base, (int) data.b->handle.len );
+		argv[1] = Integer::NewFromUnsigned( data.t->myId );
+		data.t->logCallback->Call(Context::GetCurrent()->Global(),1,argv);
+		data.t->finalizeV8Callback(data.b);
+	} else if(data.overflow) {
+		int l = data.overflow->totalSize();
+		char *d = (char *) LMALLOC(l);
+		if(d) {
+			data.overflow->copyAllTo(d);
+			argv[0] = String::New( d, l );
+			argv[1] = Integer::NewFromUnsigned( data.t->myId );
+			data.t->logCallback->Call(Context::GetCurrent()->Global(),1,argv);
+			LFREE(d);
+		} else {
+			ERROR_OUT("Error on LMALLOC. alloc was %d bytes.\n",l);
+		}
+		data.freeOverflow();
+	}
 }
 
 void GreaseLogger::callTargetCallback(uv_async_t *h, int status ) {
@@ -1296,6 +1311,7 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 	return scope.Close(Undefined());
 }
 
+
 /**
  * logstring and level manadatory
  * all else optional
@@ -1439,6 +1455,7 @@ Handle<Value> GreaseLogger::Flush(const Arguments& args) {
 
 }
 
+
 int GreaseLogger::_log( const logMeta &meta, const char *s, int len) { // internal log cmd
 //	HEAVY_DBG_OUT("out len: %d\n",len);
 //	DBG_OUT("meta.level %x",meta.level);
@@ -1447,8 +1464,10 @@ int GreaseLogger::_log( const logMeta &meta, const char *s, int len) { // intern
 	singleLog *l = NULL;
 	if(len > Opts.bufferSize) {
 		internalCmdReq req(WRITE_TARGET_OVERFLOW);
-		l = new singleLog(len);
-		l->buf.memcpy(s,len);
+		int _len = len;
+		if(len > MAX_LOG_MESSAGE_SIZE) _len = MAX_LOG_MESSAGE_SIZE;
+		l = new singleLog(_len);
+		l->buf.memcpy(s,len,"[!! OVERFLOW ENDING]");
 		if(META_HAS_IGNORES(meta)) {
 			extra_logMeta *extra = META_WITH_EXTRAS(meta);
 			memcpy(&l->meta, extra, sizeof(extra_logMeta));

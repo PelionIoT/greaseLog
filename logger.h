@@ -153,7 +153,10 @@ struct uint64_t_eqstrP {
 #define SINK_BUFFER_SIZE (DEFAULT_BUFFER_SIZE*2)
 #define BUFFERS_PER_SINK 4
 
-
+// this number can be bigger, but why?
+// anything larger than this will just be dropped. Prevents a buggy program
+// from chewing up gobs of log memory.
+#define MAX_LOG_MESSAGE_SIZE 65536
 
 
 
@@ -201,6 +204,8 @@ public:
 			handle.len = n;
 			if(n > 0)
 				handle.base = (char *) LMALLOC(n);
+			else
+				handle.base = NULL;
 		}
 		void sprintf(const char *format, ... ) {
 			char buffer[512];
@@ -233,12 +238,26 @@ public:
 			handle.base = (char *) LMALLOC(handle.len);
 			used = 0;
 		}
-		int memcpy(const char *s, size_t l) {
+		int memcpy(const char *s, size_t l,const char *append_str=nullptr) {
 			if(handle.base) {
-				if(l > handle.len) l = (int) handle.len;
-				::memcpy(handle.base,s,l);
-				used = l;
-				return l;
+				if(append_str) {
+					bool append = false;
+					int app_len = 0;
+					if(l > handle.len) {
+						app_len = strlen(append_str);
+						l = (int) handle.len-app_len;
+						append = true;
+						::memcpy((char*)handle.base+l,append_str,app_len);
+					}
+					::memcpy(handle.base,s,l);
+					used = l + app_len;
+					return l;
+				} else {
+					if(l > handle.len) l = (int) handle.len;
+					::memcpy(handle.base,s,l);
+					used = l;
+					return l;
+				}
 			} else
 				return 0;
 		}
@@ -261,6 +280,7 @@ public:
 		}
 		explicit heapBuf() : return_cb(NULL) { handle.base = NULL; handle.len = 0; };
 		~heapBuf() {
+//			DBG_OUT(" debug FREE %x\n",handle.base);
 			if(handle.base) LFREE(handle.base);
 		}
 		// I find it too confusing to having multiple overloaded '=' operators - so we have this
@@ -293,10 +313,10 @@ public:
 		heapBuf buf;
 		static const int NOT_REFED = -2;  // no reference counting
 		static const int INIT_REF = 1;  // no reference counting
-		singleLog(const char *d, int l, const logMeta &_m) : meta(), buf(d,l), _ref_cnt(NOT_REFED) {
+		singleLog(const char *d, int l, const logMeta &_m) : _ref_cnt(NOT_REFED), meta(), buf(d,l) {
 			meta.m = _m;
 		}
-		singleLog(int len) : meta(), buf(len), _ref_cnt(NOT_REFED) {
+		singleLog(int len) : _ref_cnt(NOT_REFED), meta(), buf(len) {
 			ZERO_LOGMETA(meta.m);
 		}
 		singleLog() = delete;
@@ -345,6 +365,48 @@ public:
 		}
 	};
 
+	static const int MAX_OVERFLOW_BUFFERS = 4;
+
+	class overflowWriteOut final {
+	public:
+		int N;
+		singleLog *bufs[MAX_OVERFLOW_BUFFERS];
+	protected:
+		void decRef() {
+			for(int n=0;n<MAX_OVERFLOW_BUFFERS;n++)
+				if(bufs[n]) bufs[n]->decRef();
+		}
+	public:
+		overflowWriteOut() : N(0) {
+			for(int n=0;n<MAX_OVERFLOW_BUFFERS;n++)
+				bufs[n] = NULL;
+		}
+		void addBuffer(singleLog *l) {
+			assert(N < MAX_OVERFLOW_BUFFERS);
+			bufs[N] = l;
+			N++;
+		}
+		int totalSize() {
+			int ret = 0;
+			for(int n=0;n<MAX_OVERFLOW_BUFFERS;n++)
+				if(bufs[n]) {
+					ret += bufs[n]->buf.handle.len;
+				}
+			return ret;
+		}
+		void copyAllTo(char *d) {
+			char *walk = d;
+			for(int n=0;n<MAX_OVERFLOW_BUFFERS;n++)
+				if(bufs[n]) {
+					memcpy(d,bufs[n]->buf.handle.base,bufs[n]->buf.handle.len);
+					walk += bufs[n]->buf.handle.len;
+				}
+		}
+		~overflowWriteOut() {
+			decRef();
+		}
+	};
+
 	class logLabel final {
 	public:
 		heapBuf buf;
@@ -366,6 +428,7 @@ public:
 		}
 		logLabel& operator=(logLabel &o) {
 			buf.assign(o.buf);
+			return *this;
 		}
 		/**
 		 * Creates a log label from a utf8 string with specific len. The normal cstor
@@ -807,8 +870,9 @@ protected:
 		int id;
 		const uint32_t space;
 		delim_data delim;
-		int delimLen;
-		logBuf(int s, int id, delim_data _delim) : id(id), space(s), delim(std::move(_delim)) {
+//		int delimLen;
+		bool tempBuffer; // a flag which lets you mark the buffer as temporary. Temporary buffers get deleted/freed when done
+		logBuf(int s, int id, delim_data _delim) : id(id), space(s), delim(std::move(_delim)), tempBuffer(false) {
 			handle.base = (char *) LMALLOC(space);
 			handle.len = 0;
 			uv_mutex_init(&mutex);
@@ -1095,25 +1159,41 @@ protected:
 		}
 
 
-
 		class writeCBData final {
+		protected:
+			writeCBData(logTarget *_t, overflowWriteOut *_b) : overflow(_b), t(_t), b(NULL), nocallback(false) {}
 		public:
+			overflowWriteOut *overflow;
 			logTarget *t;
 			logBuf *b;
 			bool nocallback;
-			writeCBData() : t(NULL), b(NULL) {}
-			writeCBData(logTarget *_t, logBuf *_b) : t(_t), b(_b), nocallback(false) {}
+			writeCBData() : overflow(NULL), t(NULL), b(NULL) {}
+			writeCBData(logTarget *_t, logBuf *_b) : overflow(NULL), t(_t), b(_b), nocallback(false) {}
+			static writeCBData *newAsOverflow(logTarget *t, overflowWriteOut *b) {
+				return new writeCBData(t,b);
+			}
 			writeCBData& operator=(writeCBData&& o) {
+				overflow = o.overflow;
+				o.overflow = NULL;
 				b = o.b;
 				t = o.t;
 				return *this;
+			}
+			void freeOverflow() {
+				if(overflow) delete overflow;
+				overflow = NULL;
+			}
+			~writeCBData() {
+				if(overflow) delete overflow;
 			}
 		};
 
 		// called when the V8 callback is done
 		void finalizeV8Callback(logBuf *b) {
 			b->clear();
-			availBuffers.add(b);
+			if(!availBuffers.addIfRoom(b)) {
+				ERROR_OUT("ERROR ERROR availBuffers was full (makes no sense) \n");
+			}
 		}
 
 		void returnBuffer(logBuf *b, bool sync = false, bool nocallback = false) {
@@ -1133,10 +1213,11 @@ protected:
 			}
 		}
 
-
-		void returnOverflowBuffer(logBuf *b, bool sync = false, bool nocallback = false) {
-			if(!nocallback && logCallbackSet && b->handle.len > 0) {
-				writeCBData cbdat(this,b);
+		void returnBuffer(overflowWriteOut *b, bool sync = false, bool nocallback = false) {
+			if(!nocallback && logCallbackSet && b) {
+				writeCBData cbdat;
+				cbdat.t = this;
+				cbdat.overflow = b;
 				if(!owner->v8LogCallbacks.addMvIfRoom(cbdat)) {
 					if(owner->Opts.show_errors)
 						ERROR_OUT(" !!! v8LogCallbacks is full! Can't rotate. Callback will be skipped.");
@@ -1146,10 +1227,27 @@ protected:
 				else
 					GreaseLogger::_doV8Callback(cbdat);
 			} else {
-				b->clear();
-				availBuffers.add(b);
+				if(b) delete b;
 			}
 		}
+
+
+//		void returnOverflowBuffer(logBuf *b, bool sync = false, bool nocallback = false) {
+//			if(!nocallback && logCallbackSet && b->handle.len > 0) {
+//				writeCBData cbdat(this,b);
+//				if(!owner->v8LogCallbacks.addMvIfRoom(cbdat)) {
+//					if(owner->Opts.show_errors)
+//						ERROR_OUT(" !!! v8LogCallbacks is full! Can't rotate. Callback will be skipped.");
+//				}
+//				if(!sync)
+//					uv_async_send(&owner->asyncV8LogCallback);
+//				else
+//					GreaseLogger::_doV8Callback(cbdat);
+//			} else {
+//				b->clear();
+//				availBuffers.add(b);
+//			}
+//		}
 
 
 
@@ -1178,7 +1276,7 @@ protected:
 							ERROR_OUT(" !!! writeOutBuffers is full! Can't rotate. Data will be lost.");
 						if(!availBuffers.addIfRoom(next)) {  // won't block
 							if(owner->Opts.show_errors)
-								ERROR_OUT(" !!!!!!!! CRITICAL - can't put Buffer back in availBuffers. Losing Buffer ?!@?!#!@");
+								ERROR_OUT(" !!!!!!!! CRITICAL ERROR - can't put Buffer back in availBuffers. Losing Buffer ?!@?!#!@");
 						}
 						currentBuffer->clear();
 					}
@@ -1221,7 +1319,7 @@ protected:
 					uv_async_send(&owner->asyncInternalCommand);
 				else {
 					if(owner->Opts.show_errors)
-						ERROR_OUT("Overflow. Dropping WRITE_TARGET_OVERFLOW");
+						ERROR_OUT("Overflow. Dropping WRITE_TARGET_OVERFLOW. Command overflow.");
 					delete B;
 				}
 				return;
@@ -1265,38 +1363,10 @@ protected:
 				}
 			}
 
-//			if(currentBuffer->remain() >= len) {
-//				uv_mutex_lock(&writeMutex);
-//				currentBuffer->copyIn(s,len);
-//				uv_mutex_unlock(&writeMutex);
-// //			} else if(bankSize < len) {
-// //				singleLog *B = new singleLog(s,len,m);
-// //				internalCmdReq req(WRITE_TARGET_OVERFLOW,myId);
-// //				req.aux = B;
-// //				if(owner->internalCmdQueue.addMvIfRoom(req))
-// //					uv_async_send(&owner->asyncInternalCommand);
-// //				else {
-// //					ERROR_OUT("Overflow. Dropping WRITE_TARGET_OVERFLOW");
-// //					delete B;
-// //				}
-//			} else {
-//				bool rotated = false;
-//				internalCmdReq req(TARGET_ROTATE_BUFFER,myId); // just rotated off a buffer
-//				rotated = rotate();
-//				if(rotated) {
-//					if(owner->internalCmdQueue.addMvIfRoom(req)) {
-//						int id = 0;
-//						uv_mutex_lock(&writeMutex);
-//						currentBuffer->copyIn(s,len);
-//						id = currentBuffer->id;
-//						uv_mutex_unlock(&writeMutex);
-//						DBG_OUT("Request ROTATE [%d] [target %d]", id, myId);
-//						uv_async_send(&owner->asyncInternalCommand);
-//					} else {
-//						ERROR_OUT("Overflow. Dropping TARGET_ROTATE_BUFFER");
-//					}
-//				}
-//			}
+		}
+
+		virtual void writeAsyncOverflow(overflowWriteOut *b, bool nocallbacks) {
+			delete b;
 		}
 
 		void writeOverflow(singleLog *log, Filter *filter) {  // called from grease thread...
@@ -1308,6 +1378,8 @@ protected:
 			if(dropout) return;    // if the logTarget is disabled, ignore the write()
 
 
+			overflowWriteOut *bufs = new overflowWriteOut();
+
 			singleLog *hdr = singleLog::heapSingleLog(GREASE_MAX_PREFIX_HEADER);
 			singleLog *ftr = singleLog::heapSingleLog(GREASE_MAX_PREFIX_HEADER);
 
@@ -1316,24 +1388,26 @@ protected:
 			int len_footer_buffer = putsFooter(ftr->buf.handle.base,(size_t) GREASE_MAX_PREFIX_HEADER-len_header_buffer,filter);
 			uv_mutex_unlock(&writeMutex);
 
+
 			hdr->buf.handle.len = len_header_buffer;
 			ftr->buf.handle.len = len_footer_buffer;
 			if(len_header_buffer > 0) {
-				writeAsync(hdr);
+				bufs->addBuffer(hdr);
 			} else
 				delete hdr;
-			writeAsync(log);
+			bufs->addBuffer(log);
 			if(len_footer_buffer > 0) {
-				writeAsync(ftr);
+				bufs->addBuffer(ftr);
 			} else
 				delete ftr;
 			singleLog *delim_buf = singleLog::heapSingleLog((int) delim.delim.handle.len);
 			if(delim.delim.handle.len > 0) {
 				delim_buf->buf.memcpy(delim.delim.handle.base,(int) delim.delim.handle.len);
-				writeAsync(delim_buf);
+				bufs->addBuffer(delim_buf);
 			} else
 				delete delim_buf;
 
+			writeAsyncOverflow(bufs,false);
 		}
 
 
@@ -1365,22 +1439,12 @@ protected:
 		// called from Logger thread ONLY
 		virtual void flush(logBuf *b, bool nocallbacks = false) {}; // flush buffer 'n'. This is ansynchronous
 		virtual void flushSync(logBuf *b, bool nocallbacks = false) {}; // flush buffer 'n'. This is ansynchronous
-		virtual void writeAsync(singleLog *b) {
-			b->decRef(); // dummy call - just clear memory
-		};
 		virtual void writeSync(const char *s, int len, const logMeta &m) {}; // flush buffer 'n'. This is synchronous. Writes now - skips buffering
 		virtual void close() {};
 		virtual void sync() {};
 		virtual ~logTarget();
 	};
 
-	// small helper class used to call log callbacks in v8 thread
-//	class v8LogCallback final {
-//	public:
-//		logBuf *b;
-//		logTarget *t;
-//		v8LogCallback() : b(NULL), t(NULL) {}
-//	};
 
 	class ttyTarget final : public logTarget {
 	public:
@@ -1394,8 +1458,10 @@ protected:
 		}
 		static void write_overflow_cb(uv_write_t* req, int status) {
 			HEAVY_DBG_OUT("overflow_cb");
-			singleLog *b = (singleLog *) req->data;
-			b->decRef();
+			writeCBData *d = (writeCBData *) req->data;
+			d->t->returnBuffer(d->overflow,false,d->nocallback);
+			d->overflow = NULL;
+			delete d;
 			delete req;
 		}
 
@@ -1428,13 +1494,18 @@ protected:
 			uv_mutex_unlock(&b->mutex);
 //			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
 		}
-		void writeAsync(singleLog *b) override {
-//			currentBuffer->copyIn(header_buffer,len_header_buffer, false); // false means skip delimiter
-//			currentBuffer->copyIn(s,len);
-//			currentBuffer->copyIn(footer_buffer,len_footer_buffer);
+		void writeAsyncOverflow(overflowWriteOut *b,bool nocallbacks ) override {
 			uv_write_t *req = new uv_write_t;
-			req->data = b;
-			uv_write(req, (uv_stream_t *) &tty, &b->buf.handle, 1, write_overflow_cb);
+
+			uv_buf_t bufs[MAX_OVERFLOW_BUFFERS];
+			for(int p=0;p<b->N;p++) {
+				bufs[p] = b->bufs[p]->buf.handle;
+			}
+
+			writeCBData *d = writeCBData::newAsOverflow(this,b);
+			req->data = d;
+
+			uv_write(req, (uv_stream_t *) &tty, bufs, b->N, write_overflow_cb);
 		}
 		void writeSync(const char *s, int l, const logMeta &m) override {
 			uv_write_t *req = new uv_write_t;
@@ -1445,7 +1516,6 @@ protected:
 		}
 		ttyTarget(int buffer_size, uint32_t id, GreaseLogger *o, targetReadyCB cb, delim_data _delim, target_start_info *readydata = NULL,  char *ttypath = NULL)
 		   : logTarget(buffer_size, id, o, cb, std::move(_delim), readydata), ttyFD(0)  {
-//			outReq.cb = write_cb;
 			_errcmn::err_ev err;
 
 			if(ttypath) {
@@ -1685,14 +1755,49 @@ protected:
 			uv_fs_req_cleanup(&req);
 //			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
 		}
-		void writeAsync(singleLog *b) override {
-			uv_fs_t *req = new uv_fs_t;
-			req->data = b;
+
+		void writeAsyncOverflow(overflowWriteOut *b,bool nocallbacks) override {
+//			uv_fs_t *req = new uv_fs_t;
+//			req->data = b;
 			// APIUPDATE libuv - will change with newer libuv
 			// uv_fs_write(uv_loop_t* loop, uv_fs_t* req, uv_file file, void* buf, size_t length, int64_t offset, uv_fs_cb cb);
 
-			// TODO - make format string first...
-			uv_fs_write(owner->loggerLoop, req, fileHandle, (void *) b->buf.handle.base, b->buf.handle.len, -1, write_overflow_cb);
+//			uv_write_t *req = new uv_write_t;
+//			req->data = b;
+//
+//			uv_buf_t bufs[MAX_OVERFLOW_BUFFERS];
+//			for(int p=0;p<b->N;p++) {
+//				bufs[p] = b->bufs[p]->buf.handle;
+//			}
+
+			// FIXME: in new version of libuv we need to just use uv_fs_write() which uses writev()
+
+			struct iovec iov[MAX_OVERFLOW_BUFFERS];
+			int need = 0;
+			for(int p=0;p<b->N;p++) {
+				iov[p].iov_base = b->bufs[p]->buf.handle.base;
+				iov[p].iov_len = b->bufs[p]->buf.handle.len;
+				need += b->bufs[p]->buf.handle.len;
+			}
+
+			int got = writev(fileHandle, iov, b->N);
+
+			if(got < need) {
+				HEAVY_DBG_OUT("file target: writev() only wrote %d bytes. whatev. dropping it.", got);
+			}
+
+			// if is callback, then do that
+
+			returnBuffer(b,false,nocallbacks);
+
+//			// else delete
+//			delete b;
+
+//			uv_fs_write( owner->loggerLoop, req, fileHandle, (uv_stream_t *) &tty, bufs, b->N, write_overflow_cb);
+//
+//
+//			// TODO - make format string first...
+//			uv_fs_write(owner->loggerLoop, req, fileHandle, (void *) b->buf.handle.base, b->buf.handle.len, -1, write_overflow_cb);
 		}
 		void writeSync(const char *s, int l, const logMeta &m) override {
 			uv_fs_t req;
@@ -1927,9 +2032,36 @@ protected:
 		void flushSync(logBuf *b, bool nocallbacks = false) {
 			returnBuffer(b,true,nocallbacks);
 		}; // flush buffer 'n'. This is ansynchronous
-		void writeAsync(heapBuf *b) {
-			// sechdule v8 callback now
-			// TODO
+		void writeAsyncOverflow(overflowWriteOut *b,bool nocallbacks) override {
+			int n = 0;
+			if(b->N < 1) {
+				delete b;
+				return;
+			}
+			if(!nocallbacks && logCallbackSet && b) {
+				for(int p=0; p<b->N;p++) {
+					n += b->bufs[p]->buf.handle.len;
+				}
+
+//				logBuf *outbuf = new logBuf(n,0,std::move(delim));
+//				// call returnBufferOverflow
+//				for(int p=0; p<b->N-1;p++) {
+//					outbuf->copyIn(b->bufs[p]->buf.handle.base,b->bufs[p]->buf.handle.len,false);
+//				}
+//				outbuf->copyIn(b->bufs[b->N-1]->buf.handle.base,b->bufs[b->N-1]->buf.handle.len,true);
+//
+//
+
+				writeCBData cbdat;
+				cbdat.t = this;
+				cbdat.overflow = b;
+
+				if(!owner->v8LogCallbacks.addMvIfRoom(cbdat)) {
+					if(owner->Opts.show_errors)
+						ERROR_OUT(" !!! v8LogCallbacks is full! Can't rotate. Callback will be skipped.");
+				}
+				uv_async_send(&owner->asyncV8LogCallback);
+			}
 		};
 		void writeSync(const char *s, int len) {
 			// call v8 callback now
