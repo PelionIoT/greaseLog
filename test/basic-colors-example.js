@@ -1,6 +1,6 @@
 // basic test of logging.
 
-var logger = require('../index.js');
+var logger = require('../index.js')();
 var util = require('util');
 
 
@@ -82,6 +82,7 @@ logger.addTarget({
 	    	level: "<%s> ",
 	    	tag: "{%s} ",
 	    	origin: "(%s) ",
+	    	pre_msg: " >>> ",
 //	    	post: "<targ-post" // post: "<post"
 	    },
 	},function(targetid,err){

@@ -473,7 +473,7 @@ GreaseLogger::logTarget::logTarget(int buffer_size, uint32_t id, GreaseLogger *o
 		waitingOnCBBuffers(NUM_BANKS-1),
 		err(), _log_fd(0),
 		currentBuffer(NULL), bankSize(buffer_size), owner(o), myId(id),
-		timeFormat(),tagFormat(),originFormat(),levelFormat(),preFormat(),postFormat()
+		timeFormat(),tagFormat(),originFormat(),levelFormat(),preFormat(),postFormat(),preMsgFormat()
 {
 	uv_mutex_init(&writeMutex);
 	for (int n=0;n<NUM_BANKS;n++) {
@@ -1302,6 +1302,11 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 			if(jsKey->IsString()) {
 				v8::String::Utf8Value v8str(jsKey);
 				targ->setPostFormat(v8str.operator *(),v8str.length());
+			}
+			jsKey = jsObj->Get(String::New("pre_msg"));
+			if(jsKey->IsString()) {
+				v8::String::Utf8Value v8str(jsKey);
+				targ->setPreMsgFormat(v8str.operator *(),v8str.length());
 			}
 		}
 

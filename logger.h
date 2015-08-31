@@ -1069,6 +1069,7 @@ protected:
 		logLabel levelFormat;
 		logLabel preFormat;
 		logLabel postFormat;
+		logLabel preMsgFormat; // new one, this is printed right before the given message, but after above data
 
 		void setTimeFormat(const char *s, int len) {
 			uv_mutex_lock(&writeMutex);
@@ -1098,6 +1099,11 @@ protected:
 		void setPostFormat(const char *s, int len) {
 			uv_mutex_lock(&writeMutex);
 			postFormat.setUTF8(s,len);
+			uv_mutex_unlock(&writeMutex);
+		}
+		void setPreMsgFormat(const char *s, int len) {
+			uv_mutex_lock(&writeMutex);
+			preMsgFormat.setUTF8(s,len);
 			uv_mutex_unlock(&writeMutex);
 		}
 
@@ -1137,6 +1143,10 @@ protected:
 					n = snprintf(mem+(remain-space),space,originFormat.buf.handle.base,label->buf.handle.base);
 					space = space - n;
 				}
+			}
+			if(preMsgFormat.length() > 0 && space > 0) {
+				n = snprintf(mem + (remain-space),space,preMsgFormat.buf.handle.base);
+				space = space - n;
 			}
 			// returns the amount of space used.
 			return remain-space;
