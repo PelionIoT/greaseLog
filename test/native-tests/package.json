@@ -1,0 +1,16 @@
+{
+  "name": "testmodule",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "install": "node-gyp rebuild"
+  },
+  "author": "Ed Hemphill <npm@wigwag.com> (http://www.wigwag.com/)",
+  "license": "MIT",
+  "gypfile": true
+}
