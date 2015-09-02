@@ -1,11 +1,17 @@
+var logger = require('../../index.js')();
+
 var testmodule = require('./build/Debug/obj.target/testmodule.node');
 
 
 //console.dir(testmodule);
 
+
 testmodule.doSomeLoggin("Hello",100,10,function(){
 	console.log("DONE");
-})
+});
+
+setTimeout(function(){
+},2000);
 
 
 // var pseudoFS = null;

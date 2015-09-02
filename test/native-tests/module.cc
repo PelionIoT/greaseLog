@@ -17,7 +17,7 @@
 #endif
 
 #include "module_err.h"
-
+#include "grease_client.h"
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
@@ -151,8 +151,15 @@ void TestModule::do_somelogging(uv_work_t *req) {
 	DBG_OUT("do_work()\n");
 
 
-
-
+	for(int n=0;n<20;n++) {
+		GLOG("GLOG 1234 %d  !",n);
+		GLOG_INFO("GLOG 1234 %d  !",n);
+		GLOG_WARN("GLOG 1234 %d  !",n);
+		GLOG_ERROR("GLOG 1234 %d  !",n);
+		GLOG_DEBUG("GLOG 1234 %d  !",n);
+		GLOG_DEBUG2("GLOG 1234 %d  !",n);
+		GLOG_DEBUG3("GLOG 1234 %d  !",n);
+	}
 
 
 
@@ -313,9 +320,6 @@ void TestModule::post_work(uv_work_t *req, int status) {
 //		DBG_OUT("!!! not implemented yet !!!");
 //	}
 
-
-
-
 	delete job; // should delete Persistent Handles and allow the Buffer object to be GC'ed
 }
 
@@ -373,7 +377,7 @@ void TestModule::post_work(uv_work_t *req, int status) {
 
 
 void InitAll(Handle<Object> exports, Handle<Object> module) {
-
+	INIT_GLOG;  // initialize logger
 
 //	TunInterface::Init();
 //	exports->Set(String::NewSymbol("InitPseudoFS"), FunctionTemplate::New(TestModule::Init)->GetFunction());

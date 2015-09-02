@@ -6,12 +6,13 @@
 
       "sources": [
         "module.cc",
-        "error-common.cc"
+        "error-common.cc",
+        "../../grease_client.c"   # bring in just the client stub code
       ],
 
-#      "include_dirs": [
-#
-#      ],
+      "include_dirs": [
+      "../.."
+      ],
 
       "cflags": [
         "-Wall",
