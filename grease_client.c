@@ -160,6 +160,7 @@ int grease_printf(const logMeta *m, const char *format, ... ) {
 	else {
 #endif
 		vfprintf(stderr, _grease_logstr_buffer, args );
+		fprintf(stderr, "\n" );
 		return GREASE_OK;
 #ifndef GREASE_DISABLE
 	}
@@ -287,7 +288,7 @@ int check_grease_symbols() {
 
 int grease_initLogger() {
 	if(check_grease_symbols()) {
-		printf("------- Found symbols.\n");
+		_GREASE_DBG_PRINTF("------- Found symbols.\n");
 		grease_log = local_log;
 		return GREASE_OK;
 	} else {
