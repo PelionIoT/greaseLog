@@ -11,8 +11,10 @@
 #include <string.h>  // for memcmp memcpy
 #include <stdint.h>
 
-#ifndef GREASE_LOGGING
-#define GREASE_LOGGING "0.1"
+#ifndef GREASE_LOGGING_MAJOR
+#define GREASE_LOGGING_MAJOR 0
+#define GREASE_LOGGING_MINOR 1
+
 #endif
 
 
@@ -50,8 +52,8 @@ typedef uint32_t LevelMask;    // id is always > 0
 typedef uint32_t RawLogLen;    // len of a raw log buffer into a sink
 
 // the good ole container_of macro...
-//#define grease_container_of(ptr, type, member) ({              \
-//        const typeof(((type *)0)->member ) *__mptr = (ptr);    \
+//#define grease_container_of(ptr, type, member) ({
+//        const typeof(((type *)0)->member ) *__mptr = (ptr);
 //        (type *)((char *)__mptr - offsetof(type,member) );})
 // same as this: (http://www.widecodes.com/0QmVePUkeU/kernels-containerof-any-way-to-make-it-iso-conforming.html)
 #define grease_container_of(ptr, type, member) \
@@ -96,7 +98,6 @@ extern const logMeta __noMetaData;
 
 // Default Levels:
 // these match up with greaseLog/index.js
-#define GREASE_LEVEL_INFO    0x01
 #define GREASE_LEVEL_LOG     0x01
 #define GREASE_LEVEL_ERROR   0x02
 #define GREASE_LEVEL_WARN    0x04
@@ -105,12 +106,16 @@ extern const logMeta __noMetaData;
 #define GREASE_LEVEL_DEBUG3  0x20
 #define GREASE_LEVEL_USER1   0x40
 #define GREASE_LEVEL_USER2   0x80
+#define GREASE_LEVEL_SUCCESS   0x100
+#define GREASE_LEVEL_INFO    0x0100
+#define GREASE_LEVEL_TRACE   0x200
 
 extern int (*grease_log)(const logMeta *f, const char *s, RawLogLen len);
 
 extern const logMeta __noMetaData;
 extern const uint32_t __grease_preamble;
 
+extern const logMeta __meta_logdefault;
 extern const logMeta __meta_info;
 extern const logMeta __meta_error;
 extern const logMeta __meta_warn;
@@ -119,16 +124,20 @@ extern const logMeta __meta_debug2;
 extern const logMeta __meta_debug3;
 extern const logMeta __meta_user1;
 extern const logMeta __meta_user2;
+extern const logMeta __meta_success;
+extern const logMeta __meta_trace;
 
 #define GREASE_C_MACRO_MAX_MESSAGE 250
 
-#define GLOG(s,...) grease_printf(&__meta_info, s, ##__VA_ARGS__ )
+#define GLOG(s,...) grease_printf(&__meta_logdefault, s, ##__VA_ARGS__ )
 #define GLOG_INFO(s,...) grease_printf(&__meta_info, s, ##__VA_ARGS__ )
 #define GLOG_ERROR(s,...) grease_printf(&__meta_error, s, ##__VA_ARGS__ )
 #define GLOG_WARN(s,...) grease_printf(&__meta_warn, s, ##__VA_ARGS__ )
 #define GLOG_DEBUG(s,...) grease_printf(&__meta_debug, s, ##__VA_ARGS__ )
 #define GLOG_DEBUG2(s,...) grease_printf(&__meta_debug2, s, ##__VA_ARGS__ )
 #define GLOG_DEBUG3(s,...) grease_printf(&__meta_debug3, s, ##__VA_ARGS__ )
+#define GLOG_SUCCESS(s,...) grease_printf(&__meta_success, s, ##__VA_ARGS__ )
+#define GLOG_TRACE(s,...) grease_printf(&__meta_trace, s, ##__VA_ARGS__ )
 
 #define INIT_GLOG do { \
   int r = grease_initLogger(); \

@@ -68,7 +68,6 @@ var setup = function(options) {
 
 
 	var LEVELS_default = {
-		'info'     : 0x100,
 		'log'      : 0x01,
 		'error'    : 0x02,
 		'warn'     : 0x04,
@@ -77,6 +76,7 @@ var setup = function(options) {
 		'debug3'   : 0x20,
 		'user1'    : 0x40,
 		'user2'    : 0x80,  // Levels can use the rest of the bits too...
+		'info'     : 0x100,
 		'success'  : 0x100,
 		'trace'    : 0x200
 	};

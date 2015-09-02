@@ -15,6 +15,10 @@
 extern "C" {
 #endif
 
+#if (GREASE_LOGGING_MAJOR > 0 || GREASE_LOGGING_MINOR > 1)
+#error "Mismatched grease log client files"
+#endif
+
 
 #define __DEFAULT_LOG_META_PRIVATE ._cached_hash = { UINT64_C(0xFFFFFFFFFFFFFFFF), 0, 0 }, \
 		._cached_lists = { NULL, NULL, NULL, NULL }
@@ -23,6 +27,14 @@ extern "C" {
 const logMeta __noMetaData = {
 		.tag = 0,
 		.level = 0,
+		.origin = 0,
+		.target = 0,
+		.extras = 0,
+		__DEFAULT_LOG_META_PRIVATE };
+
+const logMeta __meta_logdefault = {
+		.tag = 0,
+		.level = GREASE_LEVEL_LOG,
 		.origin = 0,
 		.target = 0,
 		.extras = 0,
@@ -94,6 +106,22 @@ const logMeta __meta_user1 = {
 const logMeta __meta_user2 = {
 		.tag = 0,
 		.level = GREASE_LEVEL_USER2,
+		.origin = 0,
+		.target = 0,
+		.extras = 0,
+		__DEFAULT_LOG_META_PRIVATE };
+
+const logMeta __meta_success = {
+		.tag = 0,
+		.level = GREASE_LEVEL_SUCCESS,
+		.origin = 0,
+		.target = 0,
+		.extras = 0,
+		__DEFAULT_LOG_META_PRIVATE };
+
+const logMeta __meta_trace = {
+		.tag = 0,
+		.level = GREASE_LEVEL_TRACE,
 		.origin = 0,
 		.target = 0,
 		.extras = 0,
@@ -259,7 +287,7 @@ int check_grease_symbols() {
 
 int grease_initLogger() {
 	if(check_grease_symbols()) {
-//		printf("------- Found symbols.\n");
+		printf("------- Found symbols.\n");
 		grease_log = local_log;
 		return GREASE_OK;
 	} else {
