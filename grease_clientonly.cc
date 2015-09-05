@@ -41,13 +41,6 @@ Handle<Value> ErrorFromErrno(const Arguments& args) {
 
 }
 
-Handle<Value> NewLogger(const Arguments& args) {
-	HandleScope scope;
-
-	return scope.Close(GreaseLogger::NewInstance(args));
-
-}
-
 Handle<Value> NewLoggerClient(const Arguments& args) {
 	HandleScope scope;
 
@@ -58,10 +51,8 @@ Handle<Value> NewLoggerClient(const Arguments& args) {
 
 void InitAll(Handle<Object> exports, Handle<Object> module) {
 
-	exports->Set(String::NewSymbol("newLogger"), FunctionTemplate::New(NewLogger)->GetFunction());
 	exports->Set(String::NewSymbol("newClient"), FunctionTemplate::New(NewLoggerClient)->GetFunction());
 
-	GreaseLogger::Init();
 	GreaseLoggerClient::Init();
 
 	Handle<Object> errconsts = Object::New();
@@ -70,4 +61,4 @@ void InitAll(Handle<Object> exports, Handle<Object> module) {
 
 }
 
-NODE_MODULE(greaseLog, InitAll)
+NODE_MODULE(greaseLogClient, InitAll)

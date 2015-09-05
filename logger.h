@@ -124,7 +124,7 @@ struct uint64_t_eqstrP {
 #define MAX_ROTATED_FILES 10
 
 
-#define DEFAULT_TARGET 0
+#define DEFAULT_TARGET GREASE_DEFAULT_TARGET_ID
 #define DEFAULT_ID 0
 
 #define ALL_LEVELS 0xFFFFFFFF
@@ -332,15 +332,6 @@ public:
 			ret->_ref_cnt = INIT_REF;
 			return ret;
 		}
-//		static singleLog *heapSingleLogEmptyNoRef() {
-//			singleLog *ret = new singleLog(0);
-//			return ret;
-//		}
-//		static singleLog *heapSingleLogEmpty() {
-//			singleLog *ret = new singleLog(0);
-//			ret->_ref_cnt = INIT_REF;
-//			return ret;
-//		}
 		void clear() {
 			buf.used = 0;
 			_ref_cnt = 1;
@@ -519,32 +510,16 @@ public:
 		void unlock() {
 			uv_mutex_unlock(&mutex);
 		}
-//		bool get_show_errors() {
-//			bool ret = false;
-//			lock();
-//			ret = show_errors;
-//			unlock();
-//			return ret;
-//		}
-//		bool get_callback_errors() {
-//			bool ret = false;
-//			lock();
-//			ret = callback_errors;
-//			unlock();
-//			return ret;
-//		}
 	};
 	Opts_t Opts;
 
 
 protected:
 	static GreaseLogger *LOGGER;  // this class is a Singleton
-//	int bufferSize;  // size of each buffer
-//	int chunkSize;
+
 	// these are the primary buffers for all log messages. Logs are put here before targets are found,
 	// or anything else happens (other than sift())
 	TWlib::tw_safeCircular<singleLog  *, LoggerAlloc > masterBufferAvail;    // <-- available buffers (starts out full)
-//	TWlib::tw_safeCircular<singleLog  *, LoggerAlloc > masterBufferWriteout; // <-- buffers to writeout (start out empty)
 
 	uv_thread_t logThreadId;
 	uv_async_t asyncV8LogCallback;  // used to wakeup v8 to call log callbacks (see v8LogCallbacks)

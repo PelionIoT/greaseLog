@@ -14,22 +14,10 @@ var colors = require('./colors.js');
 var _console_log = function() {}
 
 var nativelib = null;
-try {
-	nativelib = require('./build/Release/greaseLog.node');
-} catch(e) {
-	if(e.code == 'MODULE_NOT_FOUND')
-		nativelib = require('./build/Debug/greaseLog.node');
-	else
-		console.error("Error in nativelib [debug]: " + e + " --> " + e.stack);
-}
+
 
 var _logger = {};
 
-var natives = Object.keys(nativelib);
-for(var n=0;n<natives.length;n++) {
-//	console.log(natives[n] + " typeof " + typeof nativelib[natives[n]]);
-	_logger[natives[n]] = nativelib[natives[n]];
-}
 
 var instance = null;
 var setup = function(options) {
@@ -83,6 +71,7 @@ var setup = function(options) {
 	var do_trace = true;
 	var levels = LEVELS_default;
 	var default_sink = {unixDgram:"/tmp/grease.socket"};
+	var client_only = false;
 	if(options) {
 //		console.dir(options);
 		if(options.levels) levels = options.levels;
@@ -90,6 +79,33 @@ var setup = function(options) {
 		if(options.default_sink !== undefined) {
 			default_sink = options.default_sink;
 		}
+		if(options.client_only) { client_only = true; }
+	}
+
+	if(!client_only) {
+		try {
+			nativelib = require('./build/Release/greaseLog.node');
+		} catch(e) {
+			if(e.code == 'MODULE_NOT_FOUND')
+				nativelib = require('./build/Debug/greaseLog.node');
+			else
+				console.error("Error in nativelib [debug]: " + e + " --> " + e.stack);
+		}	
+	} else {
+		try {
+			nativelib = require('./build/Release/greaseLogClient.node');
+		} catch(e) {
+			if(e.code == 'MODULE_NOT_FOUND')
+				nativelib = require('./build/Debug/greaseLogClient.node');
+			else
+				console.error("Error in nativelib (client) [debug]: " + e + " --> " + e.stack);
+		}			
+	}
+
+	var natives = Object.keys(nativelib);
+	for(var n=0;n<natives.length;n++) {
+	//	console.log(natives[n] + " typeof " + typeof nativelib[natives[n]]);
+		_logger[natives[n]] = nativelib[natives[n]];
 	}
 
 	//	console.dir(levels);
@@ -142,6 +158,10 @@ var setup = function(options) {
 	var self = this;
 
 
+
+
+
+
 	/**
 	 * Creates the user's log.LEVEL functions
 	 * forms
@@ -150,8 +170,106 @@ var setup = function(options) {
 	 * log.LEVEL(tag,message)
 	 * log.LEVEL(message)
 	 */
+	var createfunc = function(_name,_n) {
+		if(_name == 'trace') {  
+			self[_name] = function(){ // trace is special
+				if(self.MASK_OUT & _n) {
+					return; // fast track out - if this log function is turned off
+				}
+				var args = [];
+				for(var n=0;n<arguments.length;n++)
+					args[n] = arguments[n];
+				var d = getStack();
+//						var stk = util.format.apply(undefined,args);
+//						if((typeof arguments[0] !== 'string' || arguments.length > 4)&&(!(typeof arguments[0] !== 'object' && arguments.length == 4))) {
+				if(typeof arguments[0] !== 'string' || arguments.length > 4) {
+					var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
+					for(var n=0;n<arguments.length;n++) {
+						if(typeof arguments[n] !== 'string')
+							s += " " + util.inspect(arguments[n]);							
+						else
+							s += " " + arguments[n];
+					}
+					self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+ s,d.subdir+d.file);														
+				} else {
+					if(arguments.length > 1)		
+						self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],arguments[1],d.subdir+d.file);
+					else
+						self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],d.subdir+d.file);														
+				}
 
-	if(!instance) {
+//					console.log("log: " + util.inspect(arguments));
+				// if(arguments.length > 2)
+				// 	self._log(_n,arguments[2],arguments[1],arguments[0]);
+				// else if(arguments.length == 2)
+				// 	self._log(_n,arguments[1],arguments[0]);
+				// else
+				// 	self._log(_n,arguments[0]);
+			}
+		} else {
+			self[_name] = function(){
+				if(self.MASK_OUT & _n) {
+					return; // fast track out - if this log function is turned off
+				}
+				// a caller used the log.X function with util.format style parameters						
+				if((typeof arguments[0] !== 'string' || arguments.length > 4) && (!(typeof arguments[0] == 'object' && arguments.length == 4))) {
+					var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
+					for(var n=0;n<arguments.length;n++) {
+						if(typeof arguments[n] !== 'string')
+							s += " " + util.inspect(arguments[n]);							
+						else
+							s += " " + arguments[n];
+					}
+					self._log(_n,s);
+				} else {
+					if(arguments.length > 3)
+						self._log(_n,arguments[3],arguments[2],arguments[1],arguments[0]);
+					else if(arguments.length == 3)
+						self._log(_n,arguments[2],arguments[1],arguments[0]);
+					else if(arguments.length == 2)
+						self._log(_n,arguments[1],arguments[0]);
+					else
+						self._log(_n,arguments[0]);
+				}
+			}
+		}
+		// make a LEVEL_fmt version of the log level command - this won't accept TAG or ORIGIN, but
+		// will let the user use multiple parameters, ala node.js - using util.format()
+		// example: log.debug_fmt("%d", 4)
+		self[_name+'_fmt'] = function() {
+			var s = util.format.apply(undefined,arguments);
+			self._log(_n,s);
+		}
+		// a LEVEL_tag_fmt variation.
+		// a variation allowing a tag and fancy formating.
+		// this is more expensive.
+		self[_name+'_tag_fmt'] = function() {
+			var args = [];
+			for(var n=1;n<arguments.length;n++)
+				args[n-1] = arguments[n];
+			var s = util.format.apply(undefined,args);
+			self._log(_n,s,arguments[0]);
+		}
+
+		// this is a LEVEL_trace version of the function.
+		// it provdes a location where the log was made. this is *very* expensive.
+		self[_name+'_trace'] = function() {
+			if(do_trace) {
+				var args = [];
+				for(var n=0;n<arguments.length;n++)
+					args[n] = arguments[n];
+				var d = getStack();
+				var s = util.format.apply(undefined,args);
+				self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+s,arguments[0],d.subdir+d.file);						
+			} else
+				self[_name+'_tag_fmt'].apply(self,arguments);
+		}
+
+	}
+
+
+
+	if(!instance && !client_only) {
 		instance = nativelib.newLogger();
 		instance.start(function(){              // replace dummy logger function with real functions... as soon as can.
 			_console_log("START!!!!!!!!!!!");
@@ -160,102 +278,7 @@ var setup = function(options) {
 			if(default_sink)
 				instance.addSink(default_sink);
 
-			var createfunc = function(_name,_n) {
-				if(_name == 'trace') {  
-					self[_name] = function(){ // trace is special
-						if(self.MASK_OUT & _n) {
-							return; // fast track out - if this log function is turned off
-						}
-						var args = [];
-						for(var n=0;n<arguments.length;n++)
-							args[n] = arguments[n];
-						var d = getStack();
-//						var stk = util.format.apply(undefined,args);
-//						if((typeof arguments[0] !== 'string' || arguments.length > 4)&&(!(typeof arguments[0] !== 'object' && arguments.length == 4))) {
-						if(typeof arguments[0] !== 'string' || arguments.length > 4) {
-							var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
-							for(var n=0;n<arguments.length;n++) {
-								if(typeof arguments[n] !== 'string')
-									s += " " + util.inspect(arguments[n]);							
-								else
-									s += " " + arguments[n];
-							}
-							self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+ s,d.subdir+d.file);														
-						} else {
-							if(arguments.length > 1)		
-								self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],arguments[1],d.subdir+d.file);
-							else
-								self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],d.subdir+d.file);														
-						}
-
-	//					console.log("log: " + util.inspect(arguments));
-						// if(arguments.length > 2)
-						// 	self._log(_n,arguments[2],arguments[1],arguments[0]);
-						// else if(arguments.length == 2)
-						// 	self._log(_n,arguments[1],arguments[0]);
-						// else
-						// 	self._log(_n,arguments[0]);
-					}
-				} else {
-					self[_name] = function(){
-						if(self.MASK_OUT & _n) {
-							return; // fast track out - if this log function is turned off
-						}
-						// a caller used the log.X function with util.format style parameters						
-						if((typeof arguments[0] !== 'string' || arguments.length > 4) && (!(typeof arguments[0] == 'object' && arguments.length == 4))) {
-							var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
-							for(var n=0;n<arguments.length;n++) {
-								if(typeof arguments[n] !== 'string')
-									s += " " + util.inspect(arguments[n]);							
-								else
-									s += " " + arguments[n];
-							}
-							self._log(_n,s);
-						} else {
-							if(arguments.length > 3)
-								self._log(_n,arguments[3],arguments[2],arguments[1],arguments[0]);
-							else if(arguments.length == 3)
-								self._log(_n,arguments[2],arguments[1],arguments[0]);
-							else if(arguments.length == 2)
-								self._log(_n,arguments[1],arguments[0]);
-							else
-								self._log(_n,arguments[0]);
-						}
-					}
-				}
-				// make a LEVEL_fmt version of the log level command - this won't accept TAG or ORIGIN, but
-				// will let the user use multiple parameters, ala node.js - using util.format()
-				// example: log.debug_fmt("%d", 4)
-				self[_name+'_fmt'] = function() {
-					var s = util.format.apply(undefined,arguments);
-					self._log(_n,s);
-				}
-				// a LEVEL_tag_fmt variation.
-				// a variation allowing a tag and fancy formating.
-				// this is more expensive.
-				self[_name+'_tag_fmt'] = function() {
-					var args = [];
-					for(var n=1;n<arguments.length;n++)
-						args[n-1] = arguments[n];
-					var s = util.format.apply(undefined,args);
-					self._log(_n,s,arguments[0]);
-				}
-
-				// this is a LEVEL_trace version of the function.
-				// it provdes a location where the log was made. this is *very* expensive.
-				self[_name+'_trace'] = function() {
-					if(do_trace) {
-						var args = [];
-						for(var n=0;n<arguments.length;n++)
-							args[n] = arguments[n];
-						var d = getStack();
-						var s = util.format.apply(undefined,args);
-						self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+s,arguments[0],d.subdir+d.file);						
-					} else
-						self[_name+'_tag_fmt'].apply(self,arguments);
-				}
-
-			}
+			
 
 			for(var n=0;n<levelsK.length;n++) {
 				var N = levels[levelsK[n]];
@@ -265,7 +288,20 @@ var setup = function(options) {
 				createfunc(name,N);
 			}
 		});
+	} else if(!instance && client_only) {
+		instance = nativelib.newClient();
+		_console_log("START!!!!!!!!!!! CLIENT");
+		instance.start();
+
+		var levelsK = Object.keys(levels);
+
+		for(var n=0;n<levelsK.length;n++) {
+			var N = levels[levelsK[n]];
+			var name = levelsK[n];
+			createfunc(name,N);
+		}
 	}
+
 
 	/**
 	 * @param {string} level
@@ -285,33 +321,40 @@ var setup = function(options) {
 		instance.log(message,level,tagN,originN,extras);
 	}
 
+	if(!client_only) {
 
-	this.addTarget = function(obj,cb) {
-		// TODO need to validate format strings so that they don't do unsafe things in native code
-		return instance.addTarget(obj,cb);
+		this.addTarget = function(obj,cb) {
+			// TODO need to validate format strings so that they don't do unsafe things in native code
+			return instance.addTarget(obj,cb);
+		}
+
+		this.addFilter = function(obj) {
+			// use IDs - not strings
+			if(obj.tag)
+				obj.tag = getTagId(obj.tag);
+			if(obj.origin)
+				obj.origin = getOriginId(obj.origin);
+			return instance.addFilter(obj);
+		}
+
+		this.modifyFilter = function(obj) {
+			// use IDs - not strings
+			if(obj.tag)
+				obj.tag = getTagId(obj.tag);
+			if(obj.origin)
+				obj.origin = getOriginId(obj.origin);
+			return instance.modifyFilter(obj);
+		}
+
+		this.createPTS = instance.createPTS;
+		this.addSink = instance.addSink;
+
+		this.addOriginLabel = instance.addOriginLabel;
+
+		this.modifyDefaultTarget = instance.modifyDefaultTarget;
+		this.enableTarget = instance.enableTarget;
+		this.disableTarget = instance.disableTarget;
 	}
-
-	this.addFilter = function(obj) {
-		// use IDs - not strings
-		if(obj.tag)
-			obj.tag = getTagId(obj.tag);
-		if(obj.origin)
-			obj.origin = getOriginId(obj.origin);
-		return instance.addFilter(obj);
-	}
-
-	this.modifyFilter = function(obj) {
-		// use IDs - not strings
-		if(obj.tag)
-			obj.tag = getTagId(obj.tag);
-		if(obj.origin)
-			obj.origin = getOriginId(obj.origin);
-		return instance.modifyFilter(obj);
-	}
-
-	this.createPTS = instance.createPTS;
-	this.addSink = instance.addSink;
-
 
 
 	// this.addTagLabel = function(l){
@@ -325,7 +368,6 @@ var setup = function(options) {
 	// }
 
 
-	this.addOriginLabel = instance.addOriginLabel;
 
 	this.setGlobalOpts = function(obj) {
 		if(obj.levelFilterOutMask)
@@ -333,9 +375,6 @@ var setup = function(options) {
 		instance.setGlobalOpts(obj);
 	};
 
-	this.modifyDefaultTarget = instance.modifyDefaultTarget;
-	this.enableTarget = instance.enableTarget;
-	this.disableTarget = instance.disableTarget;
 }
 
 
@@ -344,5 +383,3 @@ var setup = function(options) {
 module.exports = function(options) {
 	return new setup(options);
 };
-
-

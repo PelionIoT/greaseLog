@@ -131,18 +131,19 @@ Handle<Value> TestModule::DoSomeLoggin(const Arguments& args) {
 }
 
 void TestModule::do_somelogging(uv_work_t *req) {
+	INIT_GLOG;  // initialize logger (for the worker thread - can be called more than once)
 	workReq *job = (workReq *) req->data;
 	DBG_OUT("do_work()\n");
 
 
 	for(int n=0;n<20;n++) {
-		GLOG("GLOG 1234 %d  !",n);
-		GLOG_INFO("GLOG 1234 %d  !",n);
-		GLOG_WARN("GLOG 1234 %d  !",n);
-		GLOG_ERROR("GLOG 1234 %d  !",n);
-		GLOG_DEBUG("GLOG 1234 %d  !",n);
-		GLOG_DEBUG2("GLOG 1234 %d  !",n);
-		GLOG_DEBUG3("GLOG 1234 %d  !",n);
+		GLOG("GLOG 1234 %d  ! (test module)",n);
+		GLOG_INFO("GLOG 1234 %d  ! (test module)",n);
+		GLOG_WARN("GLOG 1234 %d  ! (test module)",n);
+		GLOG_ERROR("GLOG 1234 %d  ! (test module)",n);
+		GLOG_DEBUG("GLOG 1234 %d  ! (test module)",n);
+		GLOG_DEBUG2("GLOG 1234 %d  ! (test module)",n);
+		GLOG_DEBUG3("GLOG 1234 %d  ! (test module)",n);
 	}
 
 
@@ -177,7 +178,7 @@ void TestModule::post_work(uv_work_t *req, int status) {
 
 
 void InitAll(Handle<Object> exports, Handle<Object> module) {
-	INIT_GLOG;  // initialize logger
+	INIT_GLOG;  // initialize logger (you should also call this in every new thread at least once)
 
 	exports->Set(String::NewSymbol("testModule"), FunctionTemplate::New(TestModule::New)->GetFunction());
 	exports->Set(String::NewSymbol("doSomeLoggin"), FunctionTemplate::New(TestModule::DoSomeLoggin)->GetFunction());

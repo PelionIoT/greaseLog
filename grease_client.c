@@ -12,8 +12,10 @@
 #include <sys/un.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/syscall.h>
 
 #include "grease_client.h"
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -137,8 +139,8 @@ const uint32_t __grease_sink_ping = SINK_LOG_PING;
 const uint32_t __grease_sink_ping_ack = SINK_LOG_PING_ACK;
 
 
-
-static int found_module;
+#define MODULE_SEARCH_NOT_RAN -1
+static int found_module = MODULE_SEARCH_NOT_RAN;
 
 //__attribute__((visibility ("hidden"))) - note: gcc automatically does not export static vars
 static void *local_log;
@@ -249,7 +251,6 @@ int _grease_logToRaw(const logMeta *f, const char *s, RawLogLen len, char *tobuf
 #define SINK_BUFFER_META 1
 #define SINK_BUFFER_STRING 2
 
-#define SINK_MAX_ERRORS 10
 
 
 const char *default_path = GREASE_DEFAULT_SINK_PATH;
@@ -266,7 +267,7 @@ THREAD_LOCAL char meta_buffer[sizeof(logMeta)];
 int grease_logToSink(const logMeta *f, const char *s, RawLogLen len) {
 	uint32_t _len = len + sizeof(logMeta);
 	SET_SIZE_IN_HEADER(header_buffer,_len);
-	memcpy(meta_buffer,f,sizeof(logMeta));
+	memcpy(meta_buffer,f,sizeof(logMeta));   // why do we need to do this? just use the pointer...
 	// everything is already setup setup_sink_dgram_socket()
 	iov[SINK_BUFFER_STRING].iov_base = (void *) s;
 	iov[SINK_BUFFER_STRING].iov_len = len;
@@ -278,7 +279,7 @@ int grease_logToSink(const logMeta *f, const char *s, RawLogLen len) {
 			grease_log = NULL;
 			_GREASE_ERROR_PRINTF("Grease: disabling sink use. Too many errors.\n");
 		}
-		return GREASE_FAILED;
+		return GREASE_SINK_FAILURE;
 	} else {
 		_GREASE_DBG_PRINTF("Sent %d bytes --> Sink\n", sent_cnt);
 		return GREASE_OK;
@@ -413,76 +414,115 @@ int ping_sink() {
 
 #define SINK_NO_PING 0x0001
 
+THREAD_LOCAL pid_t my_tid;
+
 int setup_sink_dgram_socket(const char *path, int opts) {
-	socklen_t optsize;
-	err_cnt = 0;
-	send_buf_size = GREASE_MAX_MESSAGE_SIZE;
-	sink_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
-	if(sink_fd < 0) {
-		perror("UnixDgramSink: Failed to create SOCK_DGRAM socket.\n");
+
+	pid_t tid;
+	#ifdef SYS_gettid
+	tid = syscall(SYS_gettid);
+	#else
+	tid = (pid_t) 98181; // some random number - probably will break some... :(
+	#endif
+
+	if(my_tid != tid) { // this is a test, to see if we have called this in this
+		                // thread before. Why do this? b/c TLS variables can't be
+		                // statically initialized
+                        // http://stackoverflow.com/questions/12075349/how-to-initialize-thread-local-variable-in-c
+
+		socklen_t optsize;
+		err_cnt = 0;
+		send_buf_size = GREASE_MAX_MESSAGE_SIZE;
+		sink_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+		if(sink_fd < 0) {
+			perror("UnixDgramSink: Failed to create SOCK_DGRAM socket.\n");
+		} else {
+			memset(&sink_dgram_addr,0,sizeof(sink_dgram_addr));
+			sink_dgram_addr.sun_family = AF_UNIX;
+			if(path)
+				strcpy(sink_dgram_addr.sun_path,path);
+			else
+				strcpy(sink_dgram_addr.sun_path,default_path);
+		}
+
+		// discover socket max recieve size (this will be the max for a non-fragmented log message
+		setsockopt(sink_fd, SOL_SOCKET, SO_RCVBUF, &send_buf_size, sizeof(int));
+
+		getsockopt(sink_fd, SOL_SOCKET, SO_RCVBUF, &send_buf_size, &optsize);
+		// http://stackoverflow.com/questions/10063497/why-changing-value-of-so-rcvbuf-doesnt-work
+		if(send_buf_size < 100) {
+			_GREASE_ERROR_PRINTF("UnixDgramSink: Failed to start reader thread - SO_RCVBUF too small\n");
+			return 1;
+		} else {
+			_GREASE_DBG_PRINTF("UnixDgramSink: SO_RCVBUF is %d\n", send_buf_size);
+
+			message.msg_name=&sink_dgram_addr;
+			message.msg_namelen=sizeof(struct sockaddr_un);
+			message.msg_iov=iov;
+
+			message.msg_iovlen=SINK_BUFFERS_N;
+			message.msg_control=NULL;
+			message.msg_controllen=0;
+			message.msg_flags = 0;
+
+			memcpy(header_buffer,&__grease_preamble,SIZEOF_SINK_LOG_PREAMBLE);
+			iov[0].iov_base = header_buffer;
+			iov[0].iov_len = GREASE_CLIENT_HEADER_SIZE;
+
+			iov[1].iov_base = meta_buffer;
+			iov[1].iov_len = sizeof(logMeta);
+
+			iov[2].iov_base = NULL;
+			iov[2].iov_len = 0;
+
+
+			// check for alive logger on socket...
+			if(opts & SINK_NO_PING) {
+				my_tid = tid; // mark as being ran on this thread...
+				return 0;
+			} else {
+				if(!ping_sink()) {
+					my_tid = tid; // mark as being ran on this thread...
+					return 0;
+				}
+			}
+		}
 	} else {
-		memset(&sink_dgram_addr,0,sizeof(sink_dgram_addr));
-		sink_dgram_addr.sun_family = AF_UNIX;
-		if(path)
-			strcpy(sink_dgram_addr.sun_path,path);
-		else
-			strcpy(sink_dgram_addr.sun_path,default_path);
-	}
-
-	// discover socket max recieve size (this will be the max for a non-fragmented log message
-	setsockopt(sink_fd, SOL_SOCKET, SO_RCVBUF, &send_buf_size, sizeof(int));
-
-	getsockopt(sink_fd, SOL_SOCKET, SO_RCVBUF, &send_buf_size, &optsize);
-	// http://stackoverflow.com/questions/10063497/why-changing-value-of-so-rcvbuf-doesnt-work
-	if(send_buf_size < 100) {
-		_GREASE_ERROR_PRINTF("UnixDgramSink: Failed to start reader thread - SO_RCVBUF too small\n");
-		return 1;
-	} else {
-		_GREASE_DBG_PRINTF("UnixDgramSink: SO_RCVBUF is %d\n", send_buf_size);
-
-		message.msg_name=&sink_dgram_addr;
-		message.msg_namelen=sizeof(struct sockaddr_un);
-		message.msg_iov=iov;
-
-		message.msg_iovlen=SINK_BUFFERS_N;
-		message.msg_control=NULL;
-		message.msg_controllen=0;
-		message.msg_flags = 0;
-
-		memcpy(header_buffer,&__grease_preamble,SIZEOF_SINK_LOG_PREAMBLE);
-		iov[0].iov_base = header_buffer;
-		iov[0].iov_len = GREASE_CLIENT_HEADER_SIZE;
-
-		iov[1].iov_base = meta_buffer;
-		iov[1].iov_len = sizeof(logMeta);
-
-		iov[2].iov_base = NULL;
-		iov[2].iov_len = 0;
-
-		// check for alive logger on socket...
-		if(opts & SINK_NO_PING)
-			return 0;
-		else
-			return ping_sink();
+		return 0;
 	}
 }
 
 
+int grease_getConnectivityMethod() {
+	if(grease_log == grease_logToSink)
+		return GREASE_VIA_SINK;
+	if(grease_log == NULL)
+		return GREASE_NO_CONNECTION;
+	if(grease_log == local_log)
+		return GREASE_VIA_LOCAL;
+	return 999;
+}
+
+
 int grease_initLogger() {
-	if(check_grease_symbols()) {
+	// NOTE: found_module is not a TLS variable, the rest of these are...
+	if(found_module != MODULE_SEARCH_NOT_RAN) {
+		if(found_module) {
+			grease_log = local_log;
+			return GREASE_OK;
+		}
+	} else if(check_grease_symbols()) {
 		_GREASE_DBG_PRINTF("------- Found symbols.\n");
 		grease_log = local_log;
 		return GREASE_OK;
+	}
+	// else, try the sink... (since these are all TLS vars, there be a connection per thread)
+	if(!setup_sink_dgram_socket(NULL,0)) {
+		grease_log = grease_logToSink;
 	} else {
-		// TODO setup Sink connection
-//		grease_log = grease_logToSink;
-//		grease_log = NULL;
-		if(!setup_sink_dgram_socket(NULL,0)) {
-			grease_log = grease_logToSink;
-		} else {
-			grease_log = NULL;
-			return GREASE_FAILED;
-		}
+	// fail and use printf
+		grease_log = NULL;
+		return GREASE_FAILED;
 	}
 	return GREASE_OK;
 }

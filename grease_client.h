@@ -46,6 +46,8 @@ extern "C" {
 #define GREASE_LOG_SO_NAME "greaseLog.node"
 #define GREASE_META_HASHLIST_CACHE_SIZE 4
 
+#define GREASE_DEFAULT_TARGET_ID 0
+
 // for internal debugging
 #ifdef GREASE_DEBUG_MODE
 #define _GREASE_DBG_PRINTF(s,...) fprintf(stderr,s, ##__VA_ARGS__)
@@ -55,6 +57,7 @@ extern "C" {
 #define _GREASE_ERROR_PRINTF(s,...) fprintf(stderr,s, ##__VA_ARGS__)
 #endif
 
+#define SINK_MAX_ERRORS 10
 
 
 
@@ -106,6 +109,7 @@ extern const logMeta __noMetaData;
 //#define ZERO_LOGMETA(m) do { m.tag = 0; m.level = 0; m.origin = 0; m.target = 0; m._cached_hash = 0; m._cached_lists = { NULL, NULL, NULL } } while(0)
 #define ZERO_LOGMETA(m) do { m = __noMetaData; } while(0)
 #define META_HAS_CACHE(m) (m._cached_hash[0] != UINT64_C(0xFFFFFFFFFFFFFFFF))  // true if the cached hashes / list is being used
+#define GREASE_SINK_FAILURE 5
 #define GREASE_OVERFLOW 4
 #define GREASE_INVALID_PARAMS 3
 #define GREASE_NO_BUFFER 2
@@ -152,6 +156,9 @@ extern const logMeta __meta_trace;
 #define GREASE_DEFAULT_CLIENT_PATH_TEMPLATE "/tmp/grease-client.XXXXXXXX";
 #define GREASE_DEFAULT_PING_CLIENT "ping"
 
+#define GREASE_VIA_SINK 3
+#define GREASE_VIA_LOCAL 1
+#define GREASE_NO_CONNECTION 0
 
 
 
@@ -217,7 +224,13 @@ extern void grease_shutdown(void);
  */
 extern int grease_logLocal(const logMeta *f, const char *s, RawLogLen len);
 
-
+/**
+ * Returns a value showing how the client is connected.
+ * GREASE_VIA_SINK (a sink), GREASE_VIA_LOCAL (local methods - grease in proces),
+ * or GREASE_NO_CONNECTION (in which case printfs are used)
+ * @return int
+ */
+extern int grease_getConnectivityMethod();
 
 
 #ifdef __cplusplus
