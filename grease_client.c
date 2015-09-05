@@ -8,6 +8,9 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <stdarg.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <unistd.h>
 
 #include "grease_client.h"
 
@@ -236,10 +239,46 @@ int _grease_logToRaw(const logMeta *f, const char *s, RawLogLen len, char *tobuf
 //	found_module = 0;
 //	dl_iterate_phdr(callback, NULL);
 //}
+#define SINK_BUFFERS_N 3
+#define SINK_BUFFER_HEADER 0
+#define SINK_BUFFER_META 1
+#define SINK_BUFFER_STRING 2
 
+#define SINK_MAX_ERRORS 10
+
+
+const char *default_path = GREASE_DEFAULT_SINK_PATH;
+//THREAD_LOCAL char *raw_buffer[SINK_BUFFERS_N];
+THREAD_LOCAL struct iovec iov[SINK_BUFFERS_N];
+THREAD_LOCAL struct msghdr message;
+THREAD_LOCAL struct sockaddr_un sink_dgram_addr;
+THREAD_LOCAL int sink_fd;
+THREAD_LOCAL int send_buf_size;
+THREAD_LOCAL int err_cnt;
+THREAD_LOCAL char header_buffer[GREASE_CLIENT_HEADER_SIZE];
+THREAD_LOCAL char meta_buffer[sizeof(logMeta)];
 
 int grease_logToSink(const logMeta *f, const char *s, RawLogLen len) {
-	return GREASE_OK;
+	uint32_t _len = len + sizeof(logMeta);
+	SET_SIZE_IN_HEADER(header_buffer,_len);
+	memcpy(meta_buffer,f,sizeof(logMeta));
+	// everything is already setup setup_sink_dgram_socket()
+	iov[SINK_BUFFER_STRING].iov_base = (void *) s;
+	iov[SINK_BUFFER_STRING].iov_len = len;
+	int sent_cnt = 0;
+	if((sent_cnt = sendmsg(sink_fd, &message, 0)) < 0) {
+		perror("UnixDgramSink: Error on sendmsg() \n");
+		err_cnt++;
+		if(err_cnt > SINK_MAX_ERRORS) {
+			grease_log = NULL;
+			_GREASE_ERROR_PRINTF("Grease: disabling sink use. Too many errors.\n");
+		}
+		return GREASE_FAILED;
+	} else {
+		_GREASE_DBG_PRINTF("Sent %d bytes --> Sink\n", sent_cnt);
+		return GREASE_OK;
+	}
+
 }
 
 
@@ -286,6 +325,56 @@ int check_grease_symbols() {
 }
 
 
+int setup_sink_dgram_socket(const char *path) {
+	socklen_t optsize;
+	err_cnt = 0;
+	send_buf_size = GREASE_MAX_MESSAGE_SIZE;
+	sink_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+	if(sink_fd < 0) {
+		perror("UnixDgramSink: Failed to create SOCK_DGRAM socket.\n");
+	} else {
+		memset(&sink_dgram_addr,0,sizeof(sink_dgram_addr));
+			sink_dgram_addr.sun_family = AF_UNIX;
+			if(path)
+				strcpy(sink_dgram_addr.sun_path,path);
+			else
+				strcpy(sink_dgram_addr.sun_path,default_path);
+	}
+
+	// discover socket max recieve size (this will be the max for a non-fragmented log message
+	setsockopt(sink_fd, SOL_SOCKET, SO_RCVBUF, &send_buf_size, sizeof(int));
+
+	getsockopt(sink_fd, SOL_SOCKET, SO_RCVBUF, &send_buf_size, &optsize);
+	// http://stackoverflow.com/questions/10063497/why-changing-value-of-so-rcvbuf-doesnt-work
+	if(send_buf_size < 100) {
+		_GREASE_ERROR_PRINTF("UnixDgramSink: Failed to start reader thread - SO_RCVBUF too small\n");
+		return 1;
+	} else {
+		_GREASE_DBG_PRINTF("UnixDgramSink: SO_RCVBUF is %d\n", send_buf_size);
+
+		message.msg_name=&sink_dgram_addr;
+		message.msg_namelen=sizeof(struct sockaddr_un);
+		message.msg_iov=iov;
+
+		message.msg_iovlen=SINK_BUFFERS_N;
+		message.msg_control=NULL;
+		message.msg_controllen=0;
+		message.msg_flags = 0;
+
+		memcpy(header_buffer,&__grease_preamble,SIZEOF_SINK_LOG_PREAMBLE);
+		iov[0].iov_base = header_buffer;
+		iov[0].iov_len = GREASE_CLIENT_HEADER_SIZE;
+
+		iov[1].iov_base = meta_buffer;
+		iov[1].iov_len = sizeof(logMeta);
+
+		iov[2].iov_base = NULL;
+		iov[2].iov_len = 0;
+	}
+	return 0;
+}
+
+
 int grease_initLogger() {
 	if(check_grease_symbols()) {
 		_GREASE_DBG_PRINTF("------- Found symbols.\n");
@@ -294,9 +383,32 @@ int grease_initLogger() {
 	} else {
 		// TODO setup Sink connection
 //		grease_log = grease_logToSink;
-		grease_log = NULL;
+//		grease_log = NULL;
+		if(!setup_sink_dgram_socket(NULL)) {
+			grease_log = grease_logToSink;
+		} else
+			grease_log = NULL;
 	}
 	return GREASE_OK;
 }
+
+// not the end of the world if this is not called...
+void grease_shutdown() {
+	if(grease_log == grease_logToSink) {
+		close(sink_fd);
+	}
+}
+
+/**
+ *
+ * BUILD HOW TO
+ *
+ * 1) Just add this source file
+ *
+ * 2) Optional:
+ * You may need the C compiler options: -std=c99
+ * You may also need the linker option: -ldl
+ *
+ */
 
 

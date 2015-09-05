@@ -76,5 +76,5 @@ testmodule.doSomeLoggin("Hello",100,10,function(){
 setTimeout(function(){
 	clearInterval(clearme);
 	logger.log("end (logger)"); // might not be at end (expected - b/c of interval above)
-},2000);
+},20000);
 

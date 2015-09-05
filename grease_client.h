@@ -18,6 +18,9 @@
 #endif
 
 
+#define THREAD_LOCAL __thread
+
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -28,9 +31,10 @@ extern "C" {
 #define SIZEOF_SINK_LOG_PREAMBLE (sizeof(uint32_t))
 #define IS_SINK_PREAMBLE(p) (memcmp(p,&__grease_preamble,SIZEOF_SINK_LOG_PREAMBLE) == 0)
 #define GET_SIZE_FROM_PREAMBLE(p,d) (memcpy(&(d),((char *)(p))+(sizeof(uint32_t)),sizeof(uint32_t)))
+#define SET_SIZE_IN_HEADER(p,d) (memcpy(((char *)(p))+(sizeof(uint32_t)),&(d),sizeof(uint32_t)))
 #define GREASE_CLIENT_HEADER_SIZE (SIZEOF_SINK_LOG_PREAMBLE + sizeof(uint32_t))
 #define GREASE_TOTAL_MSG_SIZE(len) (len + GREASE_CLIENT_HEADER_SIZE)
-#define GREASE_RAWBUF_MIN_SIZE (GREASE_CLIENT_HEADER_SIZE + (sizeof(logMeta) + (sizeof(uint32_t)	)) )
+#define GREASE_RAWBUF_MIN_SIZE (sizeof(logMeta))
 
 #define GREASE_LOG_SO_NAME "greaseLog.node"
 #define GREASE_META_HASHLIST_CACHE_SIZE 4
@@ -38,9 +42,14 @@ extern "C" {
 // for internal debugging
 #ifdef GREASE_DEBUG_MODE
 #define _GREASE_DBG_PRINTF(s,...) fprintf(stderr,s, ##__VA_ARGS__)
+#define _GREASE_ERROR_PRINTF(s,...) fprintf(stderr,s, ##__VA_ARGS__)
 #else
 #define _GREASE_DBG_PRINTF(s,...) {}
+#define _GREASE_ERROR_PRINTF(s,...) fprintf(stderr,s, ##__VA_ARGS__)
 #endif
+
+
+
 
 typedef uint64_t FilterHash;   // format: [N1N2] where N1 is [Tag id] and N2 is [Origin Id]
 typedef uint32_t FilterId;     // filter id is always > 0
@@ -129,6 +138,8 @@ extern const logMeta __meta_trace;
 
 #define GREASE_C_MACRO_MAX_MESSAGE 250
 
+#define GREASE_DEFAULT_SINK_PATH "/tmp/grease.socket"
+
 #define GLOG(s,...) grease_printf(&__meta_logdefault, s, ##__VA_ARGS__ )
 #define GLOG_INFO(s,...) grease_printf(&__meta_info, s, ##__VA_ARGS__ )
 #define GLOG_ERROR(s,...) grease_printf(&__meta_error, s, ##__VA_ARGS__ )
@@ -138,11 +149,14 @@ extern const logMeta __meta_trace;
 #define GLOG_DEBUG3(s,...) grease_printf(&__meta_debug3, s, ##__VA_ARGS__ )
 #define GLOG_SUCCESS(s,...) grease_printf(&__meta_success, s, ##__VA_ARGS__ )
 #define GLOG_TRACE(s,...) grease_printf(&__meta_trace, s, ##__VA_ARGS__ )
+#define GLOG_USER1(s,...) grease_printf(&__meta_user1, s, ##__VA_ARGS__ )
+#define GLOG_USER2(s,...) grease_printf(&__meta_user2, s, ##__VA_ARGS__ )
 
 #define INIT_GLOG do { \
   int r = grease_initLogger(); \
   if(r != GREASE_OK) \
 	  fprintf(stderr,"****** Failed to init grease logger (%d) ******",r); } while(0)
+#define SHUTDOWN_GLOG grease_shutdown()
 
 extern int grease_printf(const logMeta *m, const char *format, ... );
 extern int _grease_logToRaw(const logMeta *f, const char *s, RawLogLen len, char *tobuf, RawLogLen *buflen);
@@ -166,6 +180,10 @@ extern int grease_logToSink(const logMeta *f, const char *s, RawLogLen len);
  */
 extern int grease_initLogger(void);
 
+/**
+ * shuts down the client
+ */
+extern void grease_shutdown(void);
 /**
  * logs to local, in process Grease server. This is defined in logger.cc
  * @param f

@@ -117,6 +117,58 @@ bool GreaseLogger::sift(logMeta &f) { // returns true, then the logger should lo
 	return ret;
 }
 
+// same as above, just uses a pointer
+bool GreaseLogger::siftP(logMeta *f) { // returns true, then the logger should log it
+	bool ret = false;
+	static uint64_t zero = 0;
+	if(Opts.levelFilterOutMask & f->level)
+		return false;
+
+	if(!META_HAS_CACHE((*f))) {  // if the hashes aren't cached, then we have not done this...
+		getHashes(f->tag,f->origin,f->_cached_hash);
+
+		uv_mutex_lock(&modifyFilters);
+		FilterList *list;
+		if(filterHashTable.find(f->_cached_hash[0],list)) { // check both tag and orgin
+			ret = true;
+			META_SET_LIST((*f),0,list);
+		}
+		if(!ret && filterHashTable.find(f->_cached_hash[1],list)) { // check just tag
+			ret = true;
+			META_SET_LIST((*f),1,list);
+		}
+		if(!ret && filterHashTable.find(f->_cached_hash[2],list)) { // check just origin...
+			ret = true;
+			META_SET_LIST((*f),2,list);
+		}
+
+		if(!ret && filterHashTable.find(zero,list)) {
+			ret = true;
+			META_SET_LIST((*f),3,list);
+		}
+
+		if(!ret && Opts.defaultFilterOut)        // if neither, then do we output by default?
+			ret = false;
+		else
+			ret = true;
+
+//		if(ret && META_HAS_IGNORES(f)) {
+//			TargetId ignore_list = META_IGNORE_LIST(f);
+//			int x = 0;
+//			while(x < MAX_IGNORE_LIST) {
+//				if(ignore_list[x] == 0) {
+//					break;
+//				}
+//				x++;
+//			}
+//		}
+
+		uv_mutex_unlock(&modifyFilters);
+	} else
+		ret = true;
+	return ret;
+}
+
 GreaseLogger *GreaseLogger::LOGGER = NULL;
 
 void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) {
@@ -363,6 +415,18 @@ int GreaseLogger::log(const logMeta &f, const char *s, int len) { // does the wo
 		return GREASE_OK;
 }
 
+int GreaseLogger::logP(logMeta *f, const char *s, int len) { // does the work of logging
+//	FilterList *list = NULL;
+
+	if(len > GREASE_MAX_MESSAGE_SIZE)
+		return GREASE_OVERFLOW;
+//	logMeta m = *f;
+	if(sift(*f)) {
+		return _log((*f),s,len);
+	} else
+		return GREASE_OK;
+}
+
 
 /**
  * create a log entry for use across the network to Grease.
@@ -376,27 +440,27 @@ int GreaseLogger::log(const logMeta &f, const char *s, int len) { // does the wo
  * @return returns GREASE_OK if successful, or GREASE_NO_BUFFER if the buffer is too small. If parameters are
  * invalid returns GREASE_INVALID_PARAMS
  */
-int logToRaw(logMeta *f, char *s, RawLogLen len, char *tobuf, int *buflen) {
-	if(!tobuf || *buflen < (GREASE_RAWBUF_MIN_SIZE + len))  // sanity check
-		return GREASE_NO_BUFFER;
-	int w = 0;
-
-	memcpy(tobuf,&__grease_preamble,SIZEOF_SINK_LOG_PREAMBLE);
-	w += SIZEOF_SINK_LOG_PREAMBLE;
-	RawLogLen _len =sizeof(logMeta) + sizeof(RawLogLen) + w;
-	memcpy(tobuf+w,&_len,sizeof(RawLogLen));
-	w += sizeof(RawLogLen);
-	if(f)
-		memcpy(tobuf+w,f,sizeof(logMeta));
-	else
-		memcpy(tobuf+w,&__noMetaData,sizeof(logMeta));
-	w += sizeof(logMeta);
-	if(s && len > 0) {
-		memcpy(tobuf+w,s,len);
-	}
-	*buflen = len;
-	return GREASE_OK;
-}
+//int logToRaw(logMeta *f, char *s, RawLogLen len, char *tobuf, int *buflen) {
+//	if(!tobuf || *buflen < (GREASE_RAWBUF_MIN_SIZE + len))  // sanity check
+//		return GREASE_NO_BUFFER;
+//	int w = 0;
+//
+//	memcpy(tobuf,&__grease_preamble,SIZEOF_SINK_LOG_PREAMBLE);
+//	w += SIZEOF_SINK_LOG_PREAMBLE;
+//	RawLogLen _len =sizeof(logMeta) + sizeof(RawLogLen) + w;
+//	memcpy(tobuf+w,&_len,sizeof(RawLogLen));
+//	w += sizeof(RawLogLen);
+//	if(f)
+//		memcpy(tobuf+w,f,sizeof(logMeta));
+//	else
+//		memcpy(tobuf+w,&__noMetaData,sizeof(logMeta));
+//	w += sizeof(logMeta);
+//	if(s && len > 0) {
+//		memcpy(tobuf+w,s,len);
+//	}
+//	*buflen = len;
+//	return GREASE_OK;
+//}
 
 
 
@@ -404,15 +468,12 @@ int GreaseLogger::logFromRaw(char *base, int len) {
 	logMeta m;
 	RawLogLen l;
 	if(len >= GREASE_RAWBUF_MIN_SIZE) {
-		memcpy(&l,base+SIZEOF_SINK_LOG_PREAMBLE,sizeof(RawLogLen));
-		if(l > GREASE_MAX_MESSAGE_SIZE)  // don't let crazy memory blocks through.
-			return GREASE_OVERFLOW;
-		memcpy(&m,base+GREASE_CLIENT_HEADER_SIZE,sizeof(logMeta));
-		if(l > 0 && l < GREASE_MAX_MESSAGE_SIZE) {
-			return log(m,base+GREASE_CLIENT_HEADER_SIZE+sizeof(logMeta),l);
-		} else {
-			ERROR_OUT("logFromRaw: message size out of range: %d\n",l);
-		}
+
+//		memcpy(&l,base+SIZEOF_SINK_LOG_PREAMBLE,sizeof(RawLogLen));
+//		if(l > GREASE_MAX_MESSAGE_SIZE)  // don't let crazy memory blocks through.
+//			return GREASE_OVERFLOW;
+//		memcpy(&m,base+GREASE_CLIENT_HEADER_SIZE,sizeof(logMeta));
+		return logP((logMeta *)base,base+sizeof(logMeta),len);
 		return GREASE_OK;
 	} else
 		return GREASE_NO_BUFFER;
@@ -1092,13 +1153,54 @@ Handle<Value> GreaseLogger::ModifyFilter(const Arguments& args) {
 /**
  * obj = {
  *    pipe: "/var/mysink"   // currently our only option is a named socket / pipe
+ *    newConnCB: function()
  * }
  */
 Handle<Value> GreaseLogger::AddSink(const Arguments& args) {
 	HandleScope scope;
 	GreaseLogger *l = GreaseLogger::setupClass();
 
+	if(args.Length() > 0 && args[0]->IsObject()) {
+		Local<Object> jsSink = args[0]->ToObject();
+		Local<Value> isPipe = jsSink->Get(String::New("pipe"));
+		Local<Value> isUnixDgram = jsSink->Get(String::New("unixDgram"));
+		Local<Value> newConnCB = jsSink->Get(String::New("newConnCB")); // called when a new connection is made on the callback
 
+		if(isPipe->IsString()) {
+			v8::String::Utf8Value v8str(isPipe);
+
+			uv_mutex_lock(&l->nextIdMutex);
+			SinkId id = l->nextSinkId++;
+			uv_mutex_unlock(&l->nextIdMutex);
+
+			PipeSink *sink = new PipeSink(l, v8str.operator *(), id, l->loggerLoop);
+			Sink *base = dynamic_cast<Sink *>(sink);
+
+			sink->bind();
+			sink->start();
+
+			l->sinks.addReplace(id,base);
+		} else if(isUnixDgram->IsString()) {
+			v8::String::Utf8Value v8str(isUnixDgram);
+
+//			DBG_OUT("Opening socket unix dgram: %s\n",);
+
+			uv_mutex_lock(&l->nextIdMutex);
+			SinkId id = l->nextSinkId++;
+			uv_mutex_unlock(&l->nextIdMutex);
+
+			UnixDgramSink *sink = new UnixDgramSink(l, v8str.operator *(), id, l->loggerLoop);
+			Sink *base = dynamic_cast<Sink *>(sink);
+
+			sink->bind();
+			sink->start();
+
+			l->sinks.addReplace(id,base);
+		} else {
+			return ThrowException(Exception::TypeError(String::New("addSink: unsupported Sink type")));
+		}
+	} else
+		return ThrowException(Exception::TypeError(String::New("addSink: bad parameters")));
 
 
 	return scope.Close(Undefined());

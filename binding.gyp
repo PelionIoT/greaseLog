@@ -43,6 +43,11 @@
          "deps/twlib/include",
          "deps/build/include"
       ],
+      'link_settings': {
+            'libraries': [
+                '-ldl'
+            ]
+      },
 
 
     'configurations': {
@@ -97,6 +102,30 @@
 
 
       ]
+    }
+
+    ,{
+      "target_name": "grease_echo",
+      "type": "executable",
+      'conditions': [ 
+        [ "OS =='linux'", {
+      "sources": [ "grease_echo.c", "grease_client.c" ],
+      'link_settings': {
+            'libraries': [
+                '-ldl'
+            ]
+      },
+      'configurations': {
+        'Debug': {
+          "ldflags" : ["-ldl"],
+          "cflags" : ["-ldl"]
+        },
+        'Release': {
+          "ldflags" : ["-ldl"],
+          "cflags" : ["-ldl"]        }
+      }
+      }  ] ]
+
     },
   ],
 }

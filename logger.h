@@ -33,7 +33,9 @@ using namespace v8;
 #include <time.h>
 // Linux thing:
 #include <sys/timeb.h>
-
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/select.h>
 
 #include <TW/tw_alloc.h>
 #include <TW/tw_fifo.h>
@@ -574,6 +576,7 @@ protected:
 	uv_mutex_t nextIdMutex;
 	FilterId nextFilterId;
 	TargetId nextTargetId;
+	SinkId nextSinkId;
 
 
 
@@ -641,13 +644,19 @@ protected:
 
 
 	class Sink {
+	protected:
+		Persistent<Function> onNewConnCB;
+	public:
+
+		Sink() : onNewConnCB() {}
+
 		static void parseAndLog() {
 
 		}
 
 
-		void bind() {
-
+		bool bind() {
+			return false;
 		}
 		void start() {
 
@@ -658,9 +667,7 @@ protected:
 	};
 
 
-
-
-	class PipeSink final : public Sink, public heapBuf::heapBufManager {
+	class PipeSink final : public Sink, virtual public heapBuf::heapBufManager  {
 	protected:
 		TWlib::tw_safeCircular<heapBuf *, LoggerAlloc > buffers;
 		struct PipeClient {
@@ -741,8 +748,8 @@ protected:
 										DBG_OUT("PipeClient: Bad state. resetting.\n");
 										c->resetState();
 									}
-								} else
-									break;
+								}
+								break;
 							}
 							case IN_LOG_ENTRY:
 							{
@@ -808,9 +815,10 @@ protected:
 		void returnBuffer(heapBuf *b) {
 			buffers.add(b);
 		}
-		void bind() {
+		bool bind() {
 			assert(path);
 			uv_pipe_bind(&pipe,path);
+			return true;
 		}
 		//uv_buf_t (*uv_alloc_cb)(uv_handle_t* handle, size_t suggested_size);
 		static uv_buf_t alloc_cb(uv_handle_t* handle, size_t suggested_size) {
@@ -863,6 +871,485 @@ protected:
 
 	};
 
+
+
+	/**
+	 * The difference between using a uv_pipe (implemented by libuv as a unix socket,
+	 * and a Unix datagram socket, is that message boundaries get preserved.
+	 * This really simplifies things.
+	 *
+	 * Read more here:
+	 * http://stackoverflow.com/questions/4669710/atomic-write-on-an-unix-socket
+	 */
+	class UnixDgramSink final : public Sink, virtual public heapBuf::heapBufManager  {
+	protected:
+//		TWlib::tw_safeCircular<heapBuf *, LoggerAlloc > buffers;
+//		struct UnixDgramClient {
+////			char temp[SINK_BUFFER_SIZE];
+//			enum _state {
+//				NEED_PREAMBLE,
+//				IN_PREAMBLE,
+//				IN_LOG_ENTRY    // have log_entry_size
+//			};
+//			int temp_used;
+//			int state_remain;
+//			int log_entry_size;
+//			_state state;
+//			uv_pipe_t client;
+//			UnixDgramSink *self;
+//			UnixDgramClient() = delete;
+//			UnixDgramClient(UnixDgramSink *_self) :
+//				temp_used(0),
+//				state_remain(GREASE_CLIENT_HEADER_SIZE),  // the initial state requires preamble + size(uint32_t)
+//				log_entry_size(0),
+//				state(NEED_PREAMBLE), self(_self) {
+//				uv_pipe_init(_self->loop, &client, 0);
+//				client.data = this;
+//			}
+//			void resetState() {
+//				state = NEED_PREAMBLE;
+//				state_remain = GREASE_CLIENT_HEADER_SIZE;
+//				temp_used = 0;
+//				log_entry_size = 0;
+//			}
+//			void close() {
+//
+//			}
+//			static void on_close(uv_handle_t *t) {
+//				PipeClient *c = (PipeClient *) t->data;
+//				delete c;
+//			}
+//			static void on_read(uv_stream_t* handle, ssize_t nread, uv_buf_t buf) {
+//				PipeClient *c = (PipeClient *) handle->data;
+//				if(nread == -1) {
+//					// time to shutdown - client left...
+//					uv_close((uv_handle_t *)&c->client, PipeClient::on_close);
+//					DBG_OUT("UnixDgramSink client disconnect.\n");
+//				} else {
+//					int walk = 0;
+//					while(walk < buf.len) {
+//						switch(c->state) {
+//							case NEED_PREAMBLE:
+//								if(buf.len >= GREASE_CLIENT_HEADER_SIZE) {
+//									if(IS_SINK_PREAMBLE(buf.base)) {
+//										c->state = IN_LOG_ENTRY;
+//										GET_SIZE_FROM_PREAMBLE(buf.base,c->log_entry_size);
+//									} else {
+//										DBG_OUT("PipeClient: Bad state. resetting.\n");
+//										c->resetState();
+//									}
+//									walk += GREASE_CLIENT_HEADER_SIZE;
+//								} else {
+//									c->state_remain = SIZEOF_SINK_LOG_PREAMBLE - buf.len;
+//									memcpy(c->temp+c->temp_used, buf.base+walk,buf.len);
+//									c->state = IN_PREAMBLE;
+//									walk += buf.len;
+//								}
+//								break;
+//							case IN_PREAMBLE:
+//							{
+//								int n = c->state_remain;
+//								if(buf.len < n) n = buf.len;
+//								memcpy(c->temp+c->temp_used,buf.base,n);
+//								walk += n;
+//								c->state_remain = c->state_remain - n;
+//								if(c->state_remain == 0) {
+//									if(IS_SINK_PREAMBLE(c->temp)) {
+//										GET_SIZE_FROM_PREAMBLE(c->temp,c->log_entry_size);
+//										c->temp_used = 0;
+//										c->state = IN_LOG_ENTRY;
+//									} else {
+//										DBG_OUT("PipeClient: Bad state. resetting.\n");
+//										c->resetState();
+//									}
+//								}
+//								break;
+//							}
+//							case IN_LOG_ENTRY:
+//							{
+//								if(c->temp_used == 0) { // we aren't using the buffer,
+//									if((buf.len - walk) >= GREASE_TOTAL_MSG_SIZE(c->log_entry_size)) { // let's see if we have everything already
+//										int r;
+//										if((r = c->self->owner->logFromRaw(buf.base,GREASE_TOTAL_MSG_SIZE(c->log_entry_size)))
+//												!= GREASE_OK) {
+//											ERROR_OUT("Grease logFromRaw failure: %d\n", r);
+//										}
+//										walk += c->log_entry_size;
+//										c->resetState();
+//									} else {
+//										memcpy(c->temp,buf.base+walk,buf.len-walk);
+//										c->temp_used = buf.len;
+//										walk += buf.len; // end loop
+//									}
+//								} else {
+//									int need = GREASE_TOTAL_MSG_SIZE(c->log_entry_size) - c->temp_used;
+//									if(need <= buf.len-walk) {
+//										memcpy(c->temp + c->temp_used,buf.base+walk,need);
+//										walk += need;
+//										c->temp_used += need;
+//										int r;
+//										if((r = c->self->owner->logFromRaw(c->temp,GREASE_TOTAL_MSG_SIZE(c->log_entry_size)))
+//												!= GREASE_OK) {
+//											ERROR_OUT("Grease logFromRaw failure (2): %d\n", r);
+//										}
+//										c->resetState();
+//									} else {
+//										memcpy(c->temp + c->temp_used,buf.base+walk,buf.len-walk);
+//										walk += buf.len-walk;
+//										c->temp_used += buf.len-walk;
+//									}
+//								}
+//								break;
+//							}
+//						}
+//					}
+//				}
+//			}
+//		};
+
+		uv_thread_t listener_thread;
+		char *path;
+
+	public:
+
+		uv_loop_t *loop;
+		GreaseLogger *owner;
+		SinkId id;
+//		uv_pipe_t pipe; // on Unix this is a AF_UNIX/SOCK_STREAM, on Windows its a Named Pipe
+		uv_mutex_t control_mutex;
+		bool stop_thread;
+		int socket_fd;
+		int wakeup_pipe[2];
+		static const int PIPE_WAIT = 1;
+		static const int PIPE_WAKEUP = 0;
+		static const int DESIRED_SOCKET_SIZE = 65536;
+		struct sockaddr_un sink_dgram_addr;
+		bool ready;
+		UnixDgramSink() = delete;
+		UnixDgramSink(GreaseLogger *o, char *_path, SinkId _id, uv_loop_t *l) :
+//				buffers(BUFFERS_PER_SINK),
+				path(NULL), loop(l), owner(o),  id(_id),
+				stop_thread(false),
+				socket_fd(0),
+				wakeup_pipe({-1,-1}),
+				ready(false) {
+//			uv_pipe_init(l,&pipe,0);
+//			pipe.data = this;
+			if(_path && strlen(_path) > 0) {
+				path = local_strdup_safe(_path);
+			}
+			else
+				DBG_OUT("UnixDgramSink: No path set. Will fail.\n");
+//			for (int n=0;n<BUFFERS_PER_SINK;n++) {
+//				heapBuf *b = new heapBuf(SINK_BUFFER_SIZE);
+////				buffers.add(b);
+//			}
+		}
+		void returnBuffer(heapBuf *b) {
+//			buffers.add(b);
+		}
+		bool bind() {
+			if(path) {
+				socket_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+				if(socket_fd < 0) {
+					ERROR_PERROR("UnixDgramSink: Failed to create SOCK_DGRAM socket.\n", errno);
+				} else {
+					if(pipe(wakeup_pipe) < 0) {
+						ERROR_PERROR("UnixDgramSink: Failed to pipe() for SOCK_DGRAM socket.\n", errno);
+					} else {
+						fcntl(wakeup_pipe[PIPE_WAIT], F_SETFL, O_NONBLOCK);
+						memset(&sink_dgram_addr,0,sizeof(sink_dgram_addr));
+						sink_dgram_addr.sun_family = AF_UNIX;
+						unlink(path); // get rid of it if it already exists
+						strcpy(sink_dgram_addr.sun_path,path);
+						if(::bind(socket_fd, (const struct sockaddr *) &sink_dgram_addr, sizeof(sink_dgram_addr)) < 0) {
+							ERROR_PERROR("UnixDgramSink: Failed to bind() SOCK_DGRAM socket.\n", errno);
+							close(socket_fd);
+						} else {
+							ready = true;
+						}
+					}
+				}
+			} else {
+				ERROR_OUT("UnixDgramSink: No path set.");
+			}
+			return ready;
+		}
+
+
+		//uv_buf_t (*uv_alloc_cb)(uv_handle_t* handle, size_t suggested_size);
+//		static uv_buf_t alloc_cb(uv_handle_t* handle, size_t suggested_size) {
+//			uv_buf_t buf;
+//			heapBuf *b = NULL;
+//			PipeClient *client = (PipeClient *) handle->data;
+//			if(client->self->buffers.remove(b)) {          // grab an existing buffer
+//				buf.base = b->handle.base;
+//				buf.len = b->handle.len;
+//				b->return_cb = (heapBuf::heapBufManager *) client->self;  // assign class/callback
+//			} else {
+//				ERROR_OUT("UnixDgramSink: alloc_cb failing. no sink buffers.\n");
+//				buf.len = 0;
+//				buf.base = NULL;
+//			}
+//			return buf;
+//		}
+//		static void on_new_conn(uv_stream_t* server, int status) {
+//			UnixDgramSink *sink = (UnixDgramSink *) server->data;
+//			if(status == 0 ) {
+//				PipeClient *client = new PipeClient(sink);
+//				int r;
+//				if((r = uv_accept(server, (uv_stream_t *)&client->client))==0) {
+//					ERROR_OUT("UnixDgramSink: Failed accept()\n", uv_strerror(uv_last_error(sink->loop)));
+//					delete sink;
+//				} else {
+//					if(uv_read_start((uv_stream_t *)&client->client,UnixDgramSink::alloc_cb, PipeClient::on_read)) {
+//
+//					}
+//				}
+//			} else {
+//				ERROR_OUT("Sink: on_new_conn: Error on status: %d\n",status);
+//			}
+//		}
+
+		static void listener_work(void *self) {
+			UnixDgramSink *sink = (UnixDgramSink *) self;
+
+			fd_set readfds;
+
+			char dump[5];
+
+			const int nbuffers = 10;
+			char *raw_buffer[nbuffers];
+			struct iovec iov[nbuffers];
+			struct msghdr message;
+
+			socklen_t optsize;
+
+			char *temp_buffer_entry = (char *) malloc(GREASE_MAX_MESSAGE_SIZE);
+
+
+			// using MSG_DONTWAIT instead
+//			int flags = fcntl(socket_fd, F_GETFL, 0);
+//			if (flags < 0) {
+//				ERROR_PERROR("UnixDgramSink: Error getting socket flags\n",errno);
+//			}
+//			flags = flags|O_NONBLOCK;
+//			if(fcntl(socket_fd, F_SETFL, flags) < 0) {
+//				ERROR_PERROR("UnixDgramSink: Error setting socket non-blocking flags\n",errno);
+//			}
+
+			// discover socket max recieve size (this will be the max for a non-fragmented log message
+			int rcv_buf_size = 65536;
+			setsockopt(sink->socket_fd, SOL_SOCKET, SO_RCVBUF, &rcv_buf_size, sizeof(int));
+
+			getsockopt(sink->socket_fd, SOL_SOCKET, SO_RCVBUF, &rcv_buf_size, &optsize);
+			// http://stackoverflow.com/questions/10063497/why-changing-value-of-so-rcvbuf-doesnt-work
+			if(rcv_buf_size < 100) {
+				ERROR_OUT("UnixDgramSink: Failed to start reader thread - SO_RCVBUF too small\n");
+			} else {
+				DBG_OUT("UnixDgramSink: SO_RCVBUF is %d\n", rcv_buf_size);
+			}
+
+			for(int n=0;n<nbuffers;n++) {
+				raw_buffer[n] = (char *) malloc(rcv_buf_size);
+			}
+
+			enum {
+				NEED_PREAMBLE,
+				IN_PREAMBLE,
+				IN_LOG
+			} state;
+			state = NEED_PREAMBLE;
+
+			FD_ZERO(&readfds);
+			FD_SET(sink->wakeup_pipe[PIPE_WAIT], &readfds);
+			FD_SET(sink->socket_fd, &readfds);
+
+			int n = sink->socket_fd + 1;
+			if(sink->wakeup_pipe[PIPE_WAIT] > n)
+				n = sink->wakeup_pipe[PIPE_WAIT]+1;
+
+
+			int recv_cnt = 0;
+			int err_cnt = 0;
+			while(!sink->stop_thread) {
+				int err = select(n,&readfds,NULL,NULL,NULL); // block and wait...
+				if(err == -1) {
+					ERROR_PERROR("UnixDgramSink: error on select() \n", errno);
+				} else if(err > 0) {
+					if(FD_ISSET(sink->wakeup_pipe[PIPE_WAIT], &readfds)) {
+						while(read(sink->wakeup_pipe[PIPE_WAIT], dump, 1) == 1) {}
+					}
+					if(FD_ISSET(sink->socket_fd, &readfds)) {
+
+						// ////////////////////////////////
+						// Business work of sink.........
+						// ////////////////////////////////
+						message.msg_name=&sink->sink_dgram_addr;
+						message.msg_namelen=sizeof(struct sockaddr_un);
+						message.msg_iov=iov;
+						message.msg_iovlen=nbuffers;
+						message.msg_control=NULL;
+						message.msg_controllen=0;
+						message.msg_flags = 0;
+
+						for(int n=0;n<nbuffers;n++) {
+							memset(raw_buffer[n],0,rcv_buf_size);
+							iov[n].iov_base = raw_buffer[n];
+							iov[n].iov_len = rcv_buf_size;
+						}
+
+						if((recv_cnt = recvmsg(sink->socket_fd, &message, MSG_DONTWAIT)) < 0) {
+							if(errno != EAGAIN || errno != EWOULDBLOCK) {
+								ERROR_PERROR("UnixDgramSink: Error on recvfrom() ", errno);
+								err_cnt++;
+							}
+						}
+
+//						DBG_OUT("recv_cnt = %d\n",recv_cnt);
+//						DBG_OUT("msg_iovlen = %d\n", message.msg_iovlen);
+//						for(int n=0;n<nbuffers;n++) {
+//							DBG_OUT("msg_iov[%d].iov_len = %d\n", n, iov[n].iov_len);
+//							DBG_OUT("iov.base[%d] = %s\n",n, iov[n].iov_base);
+//
+//						}
+
+
+						char header_temp[GREASE_CLIENT_HEADER_SIZE];
+						int header_temp_walk = 0;
+						int temp_buffer_walk = 0;
+						int walk = 0;
+						int walk_buf = 0;
+						int remain = recv_cnt;
+						int remain_in_buf = (recv_cnt > rcv_buf_size) ? rcv_buf_size : recv_cnt;
+						int iov_n = 0;
+						char *current_buffer = NULL;
+						uint32_t entry_size;
+						state = NEED_PREAMBLE;
+
+#define SD_WAL_BUF_P (current_buffer + (walk_buf))
+#define SD_WALK(N) do{walk += N; walk_buf += N; remain = remain - N; remain_in_buf = remain_in_buf - N;}while(0)
+
+						while(walk < recv_cnt) {
+							if(walk_buf >= recv_cnt) {
+								walk_buf = 0;
+								iov_n++;
+								if(iov_n >= nbuffers) {
+									ERROR_OUT("UnixDgramSink: Overflow on dgram buffers - too big of message\n");
+									break;
+								}
+								remain_in_buf = (remain > rcv_buf_size) ? rcv_buf_size : remain;
+							}
+							current_buffer = (char *) iov[iov_n].iov_base;
+							switch(state) {
+								case NEED_PREAMBLE:
+									if(remain >= GREASE_CLIENT_HEADER_SIZE) {
+										if(IS_SINK_PREAMBLE(SD_WAL_BUF_P)) {
+											state = IN_LOG;
+											GET_SIZE_FROM_PREAMBLE(SD_WAL_BUF_P,entry_size);
+										} else {
+											DBG_OUT("UnixDgram Client: Bad state. resetting. %d\n",sizeof(uint32_t));
+											state = NEED_PREAMBLE;
+										}
+										SD_WALK(GREASE_CLIENT_HEADER_SIZE);
+									} else {
+										memcpy(header_temp + header_temp_walk, SD_WAL_BUF_P,remain);
+										SD_WALK(remain);
+										remain = 0;
+										state = IN_PREAMBLE;
+									}
+									break;
+								case IN_PREAMBLE:
+								{
+									int nibble = GREASE_CLIENT_HEADER_SIZE - header_temp_walk;
+									if(remain_in_buf < nibble) n = remain_in_buf;
+									memcpy(header_temp + header_temp_walk, SD_WAL_BUF_P,nibble);
+									SD_WALK(nibble);
+									if(header_temp_walk >= GREASE_CLIENT_HEADER_SIZE) {
+										if(IS_SINK_PREAMBLE(header_temp)) {
+											GET_SIZE_FROM_PREAMBLE(header_temp,entry_size);
+											header_temp_walk = 0;
+											state = IN_LOG;
+										} else {
+											DBG_OUT("PipeClient: Bad state. resetting. (2)\n");
+											state = NEED_PREAMBLE;
+										}
+									}
+									break;
+								}
+								case IN_LOG:
+								{
+									if(temp_buffer_walk == 0) { // we aren't using the buffer,
+										if(remain_in_buf >= entry_size) { // let's see if we have everything already
+											int r;
+											if((r = sink->owner->logFromRaw(SD_WAL_BUF_P,entry_size))
+													!= GREASE_OK) {
+												ERROR_OUT("Grease logFromRaw failure: %d\n", r);
+											}
+											SD_WALK(entry_size);
+											state = NEED_PREAMBLE;
+										} else {
+											memcpy(temp_buffer_entry,SD_WAL_BUF_P,remain_in_buf);
+											temp_buffer_walk = remain_in_buf;
+											SD_WALK(remain_in_buf);
+										}
+									} else {
+										int need = entry_size - temp_buffer_walk;
+										memcpy(temp_buffer_entry + temp_buffer_walk,SD_WAL_BUF_P,need);
+										if(need <= remain_in_buf) {
+											int r;
+											if((r = sink->owner->logFromRaw(temp_buffer_entry,entry_size))
+													!= GREASE_OK) {
+												ERROR_OUT("Grease logFromRaw failure (2): %d\n", r);
+											}
+											state = NEED_PREAMBLE;
+											temp_buffer_walk =0;
+										} else {
+											temp_buffer_walk += need;
+										}
+										SD_WALK(need);
+									}
+									break;
+								}
+							}
+						}
+
+
+
+					}
+				} // else timeout
+			}
+
+			free(temp_buffer_entry);
+		}
+
+		void start() {
+			uv_thread_create(&listener_thread,UnixDgramSink::listener_work,(void *) this);
+		}
+
+		void stop() {
+			uv_mutex_lock(&control_mutex);
+			stop_thread = true;
+			uv_mutex_unlock(&control_mutex);
+			wakeup_thread();
+		}
+
+
+		~UnixDgramSink() {
+			if(path) ::free(path);
+			if(wakeup_pipe[0] < 0)
+				close(wakeup_pipe[0]);
+			if(wakeup_pipe[1] < 0)
+				close(wakeup_pipe[1]);
+		}
+
+	protected:
+		void wakeup_thread() {
+			if(wakeup_pipe[PIPE_WAKEUP] > -1) {
+				write(wakeup_pipe[PIPE_WAKEUP], "x", 1);
+			}
+		}
+	};
 
 	struct logBuf {
 		uv_buf_t handle;
@@ -2096,6 +2583,7 @@ protected:
 	FilterHashTable filterHashTable;  // look Filters by tag:origin
 
 	bool sift(logMeta &f); // returns true, then the logger should log it	TWlib::TW_KHash_32<uint16_t, int, TWlib::TW_Mutex, uint16_t_eqstrP, TWlib::Allocator<TWlib::Alloc_Std>  > magicNumTable;
+	bool siftP(logMeta *f); // returns true, then the logger should log it	TWlib::TW_KHash_32<uint16_t, int, TWlib::TW_Mutex, uint16_t_eqstrP, TWlib::Allocator<TWlib::Alloc_Std>  > magicNumTable;
 //	uint32_t levelFilterOutMask;  // mandatory - all log messages have a level. If the bit is 1, the level will be logged.
 //
 //	bool defaultFilterOut;
@@ -2202,6 +2690,7 @@ protected:
 	int logFromRaw(char *base, int len);
 public:
 	int log(const logMeta &f, const char *s, int len); // does the work of logging (for users in C++)
+	int logP(logMeta *f, const char *s, int len); // does the work of logging (for users in C++)
 	int logSync(const logMeta &f, const char *s, int len); // does the work of logging. now. will empty any buffers first.
 	static void flushAll(bool nocallbacks = false);
 	static void flushAllSync(bool rotate = true,bool nocallbacks = false);
