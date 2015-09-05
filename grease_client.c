@@ -484,7 +484,8 @@ int setup_sink_dgram_socket(const char *path, int opts) {
 				if(!ping_sink()) {
 					my_tid = tid; // mark as being ran on this thread...
 					return 0;
-				}
+				} else
+					return 1;
 			}
 		}
 	} else {
