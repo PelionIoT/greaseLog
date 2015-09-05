@@ -28,14 +28,21 @@ extern "C" {
 #define GREASE_MAX_MESSAGE_SIZE 65535  // we don't support a log entry larger than this
 #define GREASE_MAX_PREFIX_HEADER 128   // this is maximum amount of chares which will prefix a log entry
 #define SINK_LOG_PREAMBLE ((uint32_t)0xF00DFEED)
+#define SINK_LOG_PING     ((uint32_t)0xF00DF00D)
+#define SINK_LOG_PING_ACK ((uint32_t)0xF00DF11D)
+
 #define SIZEOF_SINK_LOG_PREAMBLE (sizeof(uint32_t))
 #define IS_SINK_PREAMBLE(p) (memcmp(p,&__grease_preamble,SIZEOF_SINK_LOG_PREAMBLE) == 0)
+#define IS_SINK_PING(p) (memcmp(p,&__grease_sink_ping,SIZEOF_SINK_LOG_PREAMBLE) == 0)
+#define IS_SINK_PING_ACK(p) (memcmp(p,&__grease_sink_ping_ack,SIZEOF_SINK_LOG_PREAMBLE) == 0)
 #define GET_SIZE_FROM_PREAMBLE(p,d) (memcpy(&(d),((char *)(p))+(sizeof(uint32_t)),sizeof(uint32_t)))
 #define SET_SIZE_IN_HEADER(p,d) (memcpy(((char *)(p))+(sizeof(uint32_t)),&(d),sizeof(uint32_t)))
 #define GREASE_CLIENT_HEADER_SIZE (SIZEOF_SINK_LOG_PREAMBLE + sizeof(uint32_t))
+#define GREASE_CLIENT_PING_SIZE (sizeof(uint32_t))
+#define GREASE_CLIENT_PING_ACK_SIZE GREASE_CLIENT_PING_SIZE
 #define GREASE_TOTAL_MSG_SIZE(len) (len + GREASE_CLIENT_HEADER_SIZE)
 #define GREASE_RAWBUF_MIN_SIZE (sizeof(logMeta))
-
+#define GREASE_SINK_ACK_TIMEOUT 500000   // in useconds
 #define GREASE_LOG_SO_NAME "greaseLog.node"
 #define GREASE_META_HASHLIST_CACHE_SIZE 4
 
@@ -115,7 +122,7 @@ extern const logMeta __noMetaData;
 #define GREASE_LEVEL_DEBUG3  0x20
 #define GREASE_LEVEL_USER1   0x40
 #define GREASE_LEVEL_USER2   0x80
-#define GREASE_LEVEL_SUCCESS   0x100
+#define GREASE_LEVEL_SUCCESS 0x100
 #define GREASE_LEVEL_INFO    0x0100
 #define GREASE_LEVEL_TRACE   0x200
 
@@ -123,6 +130,9 @@ extern int (*grease_log)(const logMeta *f, const char *s, RawLogLen len);
 
 extern const logMeta __noMetaData;
 extern const uint32_t __grease_preamble;
+extern const uint32_t __grease_sink_ping;
+extern const uint32_t __grease_sink_ping_ack;
+
 
 extern const logMeta __meta_logdefault;
 extern const logMeta __meta_info;
@@ -139,6 +149,11 @@ extern const logMeta __meta_trace;
 #define GREASE_C_MACRO_MAX_MESSAGE 250
 
 #define GREASE_DEFAULT_SINK_PATH "/tmp/grease.socket"
+#define GREASE_DEFAULT_CLIENT_PATH_TEMPLATE "/tmp/grease-client.XXXXXXXX";
+#define GREASE_DEFAULT_PING_CLIENT "ping"
+
+
+
 
 #define GLOG(s,...) grease_printf(&__meta_logdefault, s, ##__VA_ARGS__ )
 #define GLOG_INFO(s,...) grease_printf(&__meta_info, s, ##__VA_ARGS__ )
@@ -179,6 +194,14 @@ extern int grease_logToSink(const logMeta *f, const char *s, RawLogLen len);
  * @return GREASE_OK if successful, or GREASE_FAILED if not
  */
 extern int grease_initLogger(void);
+
+
+/**
+ * sets up the logger if using a local (in process) Grease server.
+ * This version does not try to ping the sink.
+ * @return GREASE_OK if successful, or GREASE_FAILED if not
+ */
+extern int grease_fastInitLogger(void);
 
 /**
  * shuts down the client

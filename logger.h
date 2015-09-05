@@ -1172,7 +1172,7 @@ protected:
 
 			int recv_cnt = 0;
 			int err_cnt = 0;
-			while(!sink->stop_thread) {
+			while(sink->ready && !sink->stop_thread) {
 				int err = select(n,&readfds,NULL,NULL,NULL); // block and wait...
 				if(err == -1) {
 					ERROR_PERROR("UnixDgramSink: error on select() \n", errno);
@@ -1243,7 +1243,17 @@ protected:
 							current_buffer = (char *) iov[iov_n].iov_base;
 							switch(state) {
 								case NEED_PREAMBLE:
-									if(remain >= GREASE_CLIENT_HEADER_SIZE) {
+									if(remain >= GREASE_CLIENT_PING_SIZE) {
+										if(IS_SINK_PING(SD_WAL_BUF_P)) {
+											SD_WALK(GREASE_CLIENT_HEADER_SIZE);
+											DBG_OUT(">>>>>>> GOT PING.\n");
+											// send ping ack...
+											if(sendto(sink->socket_fd, (char *) &__grease_sink_ping_ack, GREASE_CLIENT_PING_SIZE, 0,
+													(struct sockaddr *) message.msg_name, message.msg_namelen) < 0) {
+												ERROR_PERROR("UnixDgramSink (ping ack): Error on sendto() ", errno);
+											}
+											continue;
+										}
 										if(IS_SINK_PREAMBLE(SD_WAL_BUF_P)) {
 											state = IN_LOG;
 											GET_SIZE_FROM_PREAMBLE(SD_WAL_BUF_P,entry_size);

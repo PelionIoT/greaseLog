@@ -11,6 +11,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <errno.h>
 
 #include "grease_client.h"
 
@@ -132,6 +133,10 @@ const logMeta __meta_trace = {
 
 
 const uint32_t __grease_preamble = SINK_LOG_PREAMBLE;
+const uint32_t __grease_sink_ping = SINK_LOG_PING;
+const uint32_t __grease_sink_ping_ack = SINK_LOG_PING_ACK;
+
+
 
 static int found_module;
 
@@ -324,8 +329,91 @@ int check_grease_symbols() {
 	return found_module;
 }
 
+int ping_sink() {
+	char temp_buf[GREASE_CLIENT_PING_SIZE];
 
-int setup_sink_dgram_socket(const char *path) {
+
+	int sink_fd_client = socket(AF_UNIX, SOCK_DGRAM, 0);
+	if(sink_fd_client < 0) {
+		perror("UnixDgramSink: Failed to create SOCK_DGRAM socket (for ping).\n");
+		return 1;
+	}
+
+	char template[] = GREASE_DEFAULT_CLIENT_PATH_TEMPLATE;
+	char *dir = mkdtemp(template);
+	char clientpath[100];
+
+	if(dir) {
+		int ret = 0;
+		struct sockaddr_un client_dgram_addr;
+		struct timeval tv;
+		tv.tv_sec = 0;
+		tv.tv_usec = GREASE_SINK_ACK_TIMEOUT;
+		// make the socket timeout in reasonable amount of time
+		setsockopt(sink_fd_client, SOL_SOCKET, SO_RCVTIMEO,&tv,sizeof(tv));
+		socklen_t socklen = sizeof(struct sockaddr_un);
+
+		strcpy(clientpath,dir);
+		strcat(clientpath,"/");
+		strcat(clientpath,GREASE_DEFAULT_PING_CLIENT);
+
+		memset(&client_dgram_addr,0,sizeof(client_dgram_addr));
+		client_dgram_addr.sun_family = AF_UNIX;
+		strcpy(client_dgram_addr.sun_path,clientpath);
+
+		unlink(clientpath); // get rid of it if it already exists
+		if(bind(sink_fd_client, (const struct sockaddr *) &client_dgram_addr, sizeof(client_dgram_addr)) < 0) {
+			perror("UnixDgramSink: Failed to bind() SOCK_DGRAM socket. (ping)\n");
+			close(sink_fd_client);
+			ret = 1;
+		}
+
+		int r = 0;
+
+		if(!ret && ( r = sendto(sink_fd_client, &__grease_sink_ping, GREASE_CLIENT_PING_SIZE, 0, (struct sockaddr *)&sink_dgram_addr, sizeof(struct sockaddr_un))) < 0) {
+			if(r == ECONNREFUSED) {
+				perror("UnixDgramSink (ping): connection refused. \n");
+			} else
+			if(r == ETIMEDOUT) {
+				_GREASE_ERROR_PRINTF("UnixDgramSink: ETIMEDOUT - logger probably down.");
+			} else
+				perror("UnixDgramSink: Error on ping send.");
+			ret = 1;
+		}
+
+		if(!ret && ( r = recvfrom(sink_fd_client, temp_buf, GREASE_CLIENT_PING_ACK_SIZE, 0, (struct sockaddr *)&sink_dgram_addr,
+				&socklen)) < 0) {
+			if(r == ECONNREFUSED) {
+				perror("UnixDgramSink (ping wait): connection refused. \n");
+			} else
+			if(r == ETIMEDOUT) {
+				_GREASE_ERROR_PRINTF("UnixDgramSink (ping ack): ETIMEDOUT - logger probably down.");
+			} else
+				perror("UnixDgramSink: Error on wait for ping.");
+			ret = 1;
+		}
+		if(!ret && !IS_SINK_PING_ACK(&temp_buf)) {
+			_GREASE_ERROR_PRINTF("UnixDgramSink (ping ack): Bad ping. Does not look like a logger.");
+			ret = 1;
+		}
+
+
+		unlink(clientpath); // get rid of it if it already exists
+		close(sink_fd_client);
+		rmdir(dir);
+
+		return ret;
+
+	} else {
+		_GREASE_ERROR_PRINTF("Grease: trouble creating temp dir.");
+		return 1;
+	}
+
+}
+
+#define SINK_NO_PING 0x0001
+
+int setup_sink_dgram_socket(const char *path, int opts) {
 	socklen_t optsize;
 	err_cnt = 0;
 	send_buf_size = GREASE_MAX_MESSAGE_SIZE;
@@ -334,11 +422,11 @@ int setup_sink_dgram_socket(const char *path) {
 		perror("UnixDgramSink: Failed to create SOCK_DGRAM socket.\n");
 	} else {
 		memset(&sink_dgram_addr,0,sizeof(sink_dgram_addr));
-			sink_dgram_addr.sun_family = AF_UNIX;
-			if(path)
-				strcpy(sink_dgram_addr.sun_path,path);
-			else
-				strcpy(sink_dgram_addr.sun_path,default_path);
+		sink_dgram_addr.sun_family = AF_UNIX;
+		if(path)
+			strcpy(sink_dgram_addr.sun_path,path);
+		else
+			strcpy(sink_dgram_addr.sun_path,default_path);
 	}
 
 	// discover socket max recieve size (this will be the max for a non-fragmented log message
@@ -370,8 +458,13 @@ int setup_sink_dgram_socket(const char *path) {
 
 		iov[2].iov_base = NULL;
 		iov[2].iov_len = 0;
+
+		// check for alive logger on socket...
+		if(opts & SINK_NO_PING)
+			return 0;
+		else
+			return ping_sink();
 	}
-	return 0;
 }
 
 
@@ -384,10 +477,31 @@ int grease_initLogger() {
 		// TODO setup Sink connection
 //		grease_log = grease_logToSink;
 //		grease_log = NULL;
-		if(!setup_sink_dgram_socket(NULL)) {
+		if(!setup_sink_dgram_socket(NULL,0)) {
 			grease_log = grease_logToSink;
-		} else
+		} else {
 			grease_log = NULL;
+			return GREASE_FAILED;
+		}
+	}
+	return GREASE_OK;
+}
+
+int grease_fastInitLogger() {
+	if(check_grease_symbols()) {
+		_GREASE_DBG_PRINTF("------- Found symbols.\n");
+		grease_log = local_log;
+		return GREASE_OK;
+	} else {
+		// TODO setup Sink connection
+//		grease_log = grease_logToSink;
+//		grease_log = NULL;
+		if(!setup_sink_dgram_socket(NULL,SINK_NO_PING)) {
+			grease_log = grease_logToSink;
+		} else {
+			grease_log = NULL;
+			return GREASE_FAILED;
+		}
 	}
 	return GREASE_OK;
 }
