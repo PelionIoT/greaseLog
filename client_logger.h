@@ -53,6 +53,7 @@ protected:
 	static GreaseLoggerClient *CLIENT;  // this class is a Singleton
 	int sinkErrorCount;
 	int greaseConnectMethod;
+	bool sinkFailureNeedsCall;
 
 public:
 	int log(const logMeta &f, const char *s, int len); // does the work of logging (for users in C++)
@@ -83,7 +84,8 @@ protected:
 	static int _log( const logMeta *meta, const char *s, int len);
 
     GreaseLoggerClient() :
-    	Opts(), sinkErrorCount(0), greaseConnectMethod(GREASE_NO_CONNECTION)
+    	Opts(), sinkErrorCount(0), greaseConnectMethod(GREASE_NO_CONNECTION),
+    	sinkFailureNeedsCall(false)
     	{
     	    CLIENT = this;
     	}

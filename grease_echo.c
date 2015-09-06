@@ -60,7 +60,6 @@ int main(int argc, char *argv[]) {
 		}
 		if(grease_fastInitLogger() != GREASE_OK) {
 			fprintf(stderr,"    Error: Grease not running.\n");
-	//		exit(1);
 		}
 		if(argc > 2 && argv[2][0] != '\0') {
 			if(!strcmp(argv[1]+2,"info")) {
@@ -105,6 +104,9 @@ int main(int argc, char *argv[]) {
 			}
 		}
 	} else {
+		if(grease_fastInitLogger() != GREASE_OK) {
+			fprintf(stderr,"    Error: Grease not running.\n");
+		}
 		if(argv[1][0] != '\0') {
 			GLOG(argv[1]);
 		}

@@ -165,19 +165,16 @@ int grease_printf(const logMeta *m, const char *format, ... ) {
 	RawLogLen len = (RawLogLen) vsnprintf (_grease_logstr_buffer,GREASE_C_MACRO_MAX_MESSAGE,format, args);
 	va_end (args);
 #ifndef GREASE_DISABLE
-	if(grease_log != NULL)
-		return grease_log(m,_grease_logstr_buffer, len);
-	else {
-#endif
-		vfprintf(stderr, _grease_logstr_buffer, args );
-		fprintf(stderr, "\n" );
-		return GREASE_OK;
-#ifndef GREASE_DISABLE
+	if(grease_log != NULL) {
+		if(grease_log(m,_grease_logstr_buffer, len) == GREASE_OK) {
+			return GREASE_OK;
+		}
 	}
 #endif
+	vfprintf(stderr, _grease_logstr_buffer, args );
+	fprintf(stderr, "\n" );
+	return GREASE_OK;
 }
-
-
 
 /**
  * create a log entry for use across the network to Grease.
@@ -424,6 +421,7 @@ int setup_sink_dgram_socket(const char *path, int opts) {
 	#else
 	tid = (pid_t) 98181; // some random number - probably will break some... :(
 	#endif
+	err_cnt = 0;
 
 	if(my_tid != tid) { // this is a test, to see if we have called this in this
 		                // thread before. Why do this? b/c TLS variables can't be
@@ -431,7 +429,6 @@ int setup_sink_dgram_socket(const char *path, int opts) {
                         // http://stackoverflow.com/questions/12075349/how-to-initialize-thread-local-variable-in-c
 
 		socklen_t optsize;
-		err_cnt = 0;
 		send_buf_size = GREASE_MAX_MESSAGE_SIZE;
 		sink_fd = socket(AF_UNIX, SOCK_DGRAM, 0);
 		if(sink_fd < 0) {

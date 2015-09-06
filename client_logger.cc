@@ -87,6 +87,9 @@ Handle<Value> GreaseLoggerClient::Start(const Arguments& args) {
 	GreaseLoggerClient *l = GreaseLoggerClient::setupClass();
 
 	int r = grease_initLogger();
+	if(r != GREASE_OK) {
+		l->sinkFailureNeedsCall = true;
+	}
 	l->greaseConnectMethod = grease_getConnectivityMethod();
 	return scope.Close(Integer::New(r));
 }
@@ -145,12 +148,20 @@ Handle<Value> GreaseLoggerClient::Log(const Arguments& args) {
 		}
 
 		if(GreaseLoggerClient::_log(&meta.m,v8str.operator *(),v8str.length()) != GREASE_OK) {
+			if(l->sinkFailureNeedsCall) {
+				if(!l->Opts.onSinkFailureCB.IsEmpty()) {
+					l->Opts.onSinkFailureCB->Call(Context::GetCurrent()->Global(),0,NULL);
+					l->sinkFailureNeedsCall = false;
+				}
+			}
 			if(l->greaseConnectMethod == GREASE_VIA_SINK) {
 				l->sinkErrorCount++;
 				if(l->sinkErrorCount > l->Opts.maxSinkErrors) {
 					// make callback
 					if(!l->Opts.onSinkFailureCB.IsEmpty()) {
 						l->Opts.onSinkFailureCB->Call(Context::GetCurrent()->Global(),0,NULL);
+					} else {
+						l->sinkFailureNeedsCall = true;
 					}
 					l->greaseConnectMethod = GREASE_NO_CONNECTION;
 				}
@@ -164,10 +175,8 @@ Handle<Value> GreaseLoggerClient::Log(const Arguments& args) {
 
 int GreaseLoggerClient::_log( const logMeta *meta, const char *s, int len) { // internal log cmd
 	int ret = GREASE_FAILED;
-	if(grease_log)
+	if(grease_log) {
 		ret = grease_log(meta, s, len);
-	else {
-		// TODO - call back into node for failover logging.
 	}
 
 	return ret;
