@@ -177,7 +177,7 @@ extern const logMeta __meta_trace;
 #define INIT_GLOG do { \
   int r = grease_initLogger(); \
   if(r != GREASE_OK) \
-	  fprintf(stderr,"****** Failed to init grease logger (%d) ******",r); } while(0)
+	  fprintf(stderr,"****** Failed to init grease logger (%d) ******\n",r); } while(0)
 #define SHUTDOWN_GLOG grease_shutdown()
 
 extern int grease_printf(const logMeta *m, const char *format, ... );

@@ -155,7 +155,14 @@ Handle<Value> GreaseLoggerClient::Log(const Arguments& args) {
 
 
 int GreaseLoggerClient::_log( const logMeta *meta, const char *s, int len) { // internal log cmd
-	return grease_logToSink(meta, s, len);
+	int ret = GREASE_FAILED;
+	if(grease_log)
+		ret = grease_log(meta, s, len);
+	else {
+		// TODO - call back into node for failover logging.
+	}
+
+	return ret;
 }
 
 
@@ -168,10 +175,10 @@ void GreaseLoggerClient::Init() {
 
 	tpl->PrototypeTemplate()->SetInternalFieldCount(2);
 
-
-
 	tpl->InstanceTemplate()->Set(String::NewSymbol("start"), FunctionTemplate::New(Start)->GetFunction());
 	tpl->InstanceTemplate()->Set(String::NewSymbol("log"), FunctionTemplate::New(Log)->GetFunction());
+	tpl->InstanceTemplate()->Set(String::NewSymbol("setGlobalOpts"), FunctionTemplate::New(SetGlobalOpts)->GetFunction());
+
 
 	GreaseLoggerClient::constructor = Persistent<Function>::New(tpl->GetFunction());
 
