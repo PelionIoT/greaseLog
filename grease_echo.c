@@ -13,7 +13,7 @@
 #include <sys/stat.h>
 #include <stdlib.h>
 
-#define GREASE_DEBUG_MODE 1
+//#define GREASE_DEBUG_MODE 1
 #include "grease_client.h"
 
 #define ERROR_OUT(s,...) fprintf(stderr, "**ERROR** " s, ##__VA_ARGS__ )//#define ERROR_PERROR(s,...) fprintf(stderr, "*****ERROR***** " s, ##__VA_ARGS__ );

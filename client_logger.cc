@@ -55,6 +55,14 @@ Handle<Value> GreaseLoggerClient::SetGlobalOpts(const Arguments& args) {
 		l->Opts.defaultFilterOut = v;
 	}
 
+//	req->completeCB = Persistent<Function>::New(Local<Function>::Cast(args[0]));
+	jsVal = jsObj->Get(String::New("onSinkFailureCB"));
+	if(jsVal->IsFunction()) {
+		l->Opts.lock();
+		l->Opts.onSinkFailureCB = Persistent<Function>::New(Local<Function>::Cast(jsVal));
+		l->Opts.unlock();
+	}
+
 	jsVal = jsObj->Get(String::New("show_errors"));
 	if(jsVal->IsBoolean()) {
 		bool v = jsVal->ToBoolean()->BooleanValue();

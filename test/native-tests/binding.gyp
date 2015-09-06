@@ -27,7 +27,7 @@
             "Release" : {
             },
             "Debug" : {
-              "defines" : [ "ERRCMN_DEBUG_BUILD", "PSEUDOFS_DEBUG_BUILD" ]
+              "defines" : [ "ERRCMN_DEBUG_BUILD" ]
             }
           }
           }
