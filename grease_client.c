@@ -210,8 +210,12 @@ int _grease_logToRaw(const logMeta *f, const char *s, RawLogLen len, char *tobuf
 	return GREASE_OK;
 }
 
+
+// these throw warning saying 'already defined'
+// but without them dlopen() does not compile right
 #define _GNU_SOURCE
 #define __USE_GNU
+
 #include <elf.h>
 #include <dlfcn.h>
 #include <link.h>
@@ -266,7 +270,11 @@ int grease_logToSink(const logMeta *f, const char *s, RawLogLen len) {
 	SET_SIZE_IN_HEADER(header_buffer,_len);
 //	memcpy(meta_buffer,f,sizeof(logMeta));   // why do we need to do this? just use the pointer...
 	// everything is already setup setup_sink_dgram_socket()
-	iov[SINK_BUFFER_META].iov_base = f;
+#ifdef __cplusplus
+	iov[SINK_BUFFER_META].iov_base = const_cast<void *>(f);
+#else
+	iov[SINK_BUFFER_META].iov_base = (void *) (f);
+#endif
 	iov[SINK_BUFFER_STRING].iov_base = (void *) s;
 	iov[SINK_BUFFER_STRING].iov_len = len;
 	int sent_cnt = 0;
