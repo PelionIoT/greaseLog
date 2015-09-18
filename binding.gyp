@@ -42,7 +42,8 @@
       ],
       "include_dirs": [
          "deps/twlib/include",
-         "deps/build/include"
+         "deps/build/include",
+	 "node_modules/nan"
       ],
       'link_settings': {
             'libraries': [
@@ -172,7 +173,8 @@
       ],
       "include_dirs": [
          "deps/twlib/include",
-         "deps/build/include"
+         "deps/build/include",
+	 "node_modules/nan"
       ],
       'link_settings': {
             'libraries': [

@@ -78,6 +78,9 @@ logger.addTarget({
 			console.log("added filter: " + ret);
 		}
 
+
+		console.log("HERE HERE HERE HERE HERE HERE HERE HERE HERE HERE HERE HERE HERE HERE HERE HERE HERE HERE HERE HERE HERE");
+
 		setTimeout(function(){
 			console.log("2 second timeout over.");
 		},2000); 
@@ -88,12 +91,12 @@ logger.addTarget({
 		logger.addTarget({
 			    file: "testlog2.log",
 			    delim: '\n', // separate each entry with a hard return
-		// 	    rotate: {
-		// 	    	max_files: 5,
-		// 	    	max_file_size:  10000,
-		// 	    	max_total_size: 100000
-		// //	    	,rotate_on_start: true
-		// 	    }
+			    rotate: {
+			    	max_files: 5,
+			    	max_file_size:  10000,
+			    	max_total_size: 100000
+			    	,rotate_on_start: true
+			    }
 			},function(tid2,err){
 				file_targ_id = tid2;
 				if(err) {
@@ -180,7 +183,7 @@ logger.addTarget({
 				logger.debug('Eds', "....DEBUG(2) "+N+"....");			
 				logger.debug('special.js','Eds', "....DEBUG(3) "+N+"....");			
 				logger.debug('special.js',undefined, "....DEBUG(4)"+N+"....");				 // should go to file only...
-				logger.error("....ERROR....");
+				logger.error("....ERROR...." + N);
 				logger.log(" log log log");
 				logger.debug({ignores:callback_targ_id},undefined,'Eds'," NO-CALLBACK NO-CALLBACK");
 				logger.debug('Eds'," CALLBACK CALLBACK ");
@@ -214,6 +217,12 @@ logger.addTarget({
 
 
 	});
+
+// setTimeout(function() {
+// 	console.log("TIMEOUT on main wait.");
+// },5000)
+
+
 
 // var testCallback = function(str,id) {
 // 	console.log("CB (" + id + ")>" + str + "<");

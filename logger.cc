@@ -17,32 +17,34 @@
 #include <TW/tw_fifo.h>
 #include <TW/tw_khash.h>
 
+#include "nan.h"
+
 #include "grease_client.h"
 #include "error-common.h"
 
 using namespace Grease;
 
-Persistent<Function> GreaseLogger::constructor;
+Nan::Persistent<v8::Function> GreaseLogger::constructor;
 
-Handle<Value> GreaseLogger::SetGlobalOpts(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLogger::SetGlobalOpts) {
 
 	GreaseLogger *l = GreaseLogger::setupClass();
 	Local<Function> cb;
 
-	if(args.Length() < 1 || !args[0]->IsObject()) {
-		return ThrowException(Exception::TypeError(String::New("setGlobalOpts: bad parameters")));
+	if(info.Length() < 1 || !info[0]->IsObject()) {
+		Nan::ThrowTypeError("setGlobalOpts: bad parameters");
+		return;
 	}
 
-	Local<Object> jsObj = args[0]->ToObject();
+	Local<Object> jsObj = info[0]->ToObject();
 //	l->levelFilterOutMask
-	Local<Value> jsVal = jsObj->Get(String::New("levelFilterOutMask"));
+	Local<Value> jsVal = jsObj->Get(Nan::New("levelFilterOutMask").ToLocalChecked());
 
 	if(jsVal->Uint32Value()) {
 		l->Opts.levelFilterOutMask = jsVal->Uint32Value();
 	}
 
-	jsVal = jsObj->Get(String::New("defaultFilterOut"));
+	jsVal = jsObj->Get(Nan::New("defaultFilterOut").ToLocalChecked());
 	if(jsVal->IsBoolean()) {
 		bool v = jsVal->ToBoolean()->BooleanValue();
 		uv_mutex_lock(&l->modifyFilters);
@@ -50,19 +52,17 @@ Handle<Value> GreaseLogger::SetGlobalOpts(const Arguments& args) {
 		uv_mutex_unlock(&l->modifyFilters);
 	}
 
-	jsVal = jsObj->Get(String::New("show_errors"));
+	jsVal = jsObj->Get(Nan::New("show_errors").ToLocalChecked());
 	if(jsVal->IsBoolean()) {
 		bool v = jsVal->ToBoolean()->BooleanValue();
 		l->Opts.show_errors = v;
 	}
-	jsVal = jsObj->Get(String::New("callback_errors"));
+	jsVal = jsObj->Get(Nan::New("callback_errors").ToLocalChecked());
 	if(jsVal->IsBoolean()) {
 		bool v = jsVal->ToBoolean()->BooleanValue();
 		l->Opts.callback_errors = v;
 	}
 
-
-	return scope.Close(Undefined());
 }
 
 
@@ -171,7 +171,11 @@ bool GreaseLogger::siftP(logMeta *f) { // returns true, then the logger should l
 
 GreaseLogger *GreaseLogger::LOGGER = NULL;
 
+#if (UV_VERSION_MAJOR > 0)
+void GreaseLogger::handleInternalCmd(uv_async_t *handle) {
+#else
 void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) {
+#endif
 	GreaseLogger::internalCmdReq req;
 	logTarget *t = NULL;
 	bool ignore = false;
@@ -356,7 +360,11 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
 	}
 }
 
-void GreaseLogger::handleExternalCmd(uv_async_t *handle, int status /*UNUSED*/) {
+#if (UV_VERSION_MAJOR > 0)
+	void GreaseLogger::handleExternalCmd(uv_async_t *handle) {
+#else
+	void GreaseLogger::handleExternalCmd(uv_async_t *handle, int status /*UNUSED*/) {
+#endif
 	GreaseLogger::nodeCmdReq req;
 	while(LOGGER->nodeCmdQueue.removeMv(req)) {
 		logTarget *t = NULL;
@@ -381,8 +389,11 @@ void GreaseLogger::handleExternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
 
 }
 
-
+#if (UV_VERSION_MAJOR > 0)
+void GreaseLogger::flushTimer_cb(uv_timer_t* handle) {
+#else
 void GreaseLogger::flushTimer_cb(uv_timer_t* handle, int status) {
+#endif
 	DBG_OUT("!! FLUSH TIMER !!");
 	flushAll();
 }
@@ -392,15 +403,13 @@ void GreaseLogger::flushTimer_cb(uv_timer_t* handle, int status) {
 void GreaseLogger::mainThread(void *p) {
 	GreaseLogger *SELF = (GreaseLogger *) p;
 
-
-
 	uv_timer_init(SELF->loggerLoop, &SELF->flushTimer);
 	uv_unref((uv_handle_t *)&LOGGER->flushTimer);
 	uv_timer_start(&SELF->flushTimer, flushTimer_cb, 2000, 500);
 	uv_async_init(SELF->loggerLoop, &SELF->asyncInternalCommand, handleInternalCmd);
 	uv_async_init(SELF->loggerLoop, &SELF->asyncExternalCommand, handleExternalCmd);
 
-    uv_run(SELF->loggerLoop, UV_RUN_DEFAULT);
+	uv_run(SELF->loggerLoop, UV_RUN_DEFAULT);
 
 }
 
@@ -527,7 +536,7 @@ GreaseLogger::logTarget::logTarget(int buffer_size, uint32_t id, GreaseLogger *o
 		readyCB(cb),                  // called when the target is ready or has failed to setup
 		readyData(readydata),
 		logCallbackSet(false),
-		logCallback(),
+		logCallback(NULL),
 		delim(std::move(_delim)),
 		availBuffers(NUM_BANKS),
 		writeOutBuffers(NUM_BANKS-1), // there should always be one buffer available for writingTo
@@ -600,19 +609,16 @@ void GreaseLogger::start_logger_cb(GreaseLogger *l, _errcmn::err_ev &err, void *
 		}
 		uv_async_send(&l->asyncTargetCallback);
 	} else {
-		if(!info->targetStartCB.IsEmpty()) {
+		if(info->targetStartCB) {
 			const unsigned argc = 1;
-			Local<Value> argv[argc];
-			if(!info->targetStartCB->IsUndefined()) {
-				if(err.hasErr()) {
-					ERROR_OUT("Error on starting default target. greaseLog starting anyway...\n");
-				}
-				info->targetStartCB->Call(Context::GetCurrent()->Global(),0,NULL);
+			if(err.hasErr()) {
+				ERROR_OUT("Error on starting default target. greaseLog starting anyway...\n");
+			}
+			info->targetStartCB->Call(Nan::GetCurrentContext()->Global(),0,NULL);
 //				else {
 //					argv[0] = _errcmn::err_ev_to_JS(err, "Default target startup error: ")->ToObject();
 //					info->targetStartCB->Call(Context::GetCurrent()->Global(),1,argv);
 //				}
-			}
 		}
 	}
 //	delete info;
@@ -626,16 +632,14 @@ void GreaseLogger::start(actionCB cb, target_start_info *data) {
 	uv_thread_create(&logThreadId,GreaseLogger::mainThread,this);
 }
 
-Handle<Value> GreaseLogger::Start(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLogger::Start) {
 	GreaseLogger *l = GreaseLogger::setupClass();
-	GreaseLogger::target_start_info *info = new GreaseLogger::target_start_info();
+	GreaseLogger::target_start_info *startinfo = new GreaseLogger::target_start_info();
 
-	if(args.Length() > 0 && args[0]->IsFunction()) {
-		info->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[0]));
+	if(info.Length() > 0 && info[0]->IsFunction()) {
+		startinfo->targetStartCB = new Nan::Callback(Local<Function>::Cast(info[0]));
 	}
-	l->start(start_logger_cb, info);
-	return scope.Close(Undefined());
+	l->start(start_logger_cb, startinfo);
 }
 
 
@@ -648,18 +652,16 @@ void GreaseLogger::start_target_cb(GreaseLogger *l, _errcmn::err_ev &err, void *
 		}
 		uv_async_send(&l->asyncTargetCallback);
 	} else {
-		if(!info->targetStartCB.IsEmpty()) {
+		if(info->targetStartCB) {
 			const unsigned argc = 2;
 			Local<Value> argv[argc];
-			if(!info->targetStartCB->IsUndefined()) {
-				if(!err.hasErr()) {
-					argv[0] = Integer::New(info->targId);
-					info->targetStartCB->Call(Context::GetCurrent()->Global(),1,argv);
-				} else {
-					argv[0] = Integer::New(-1);
-					argv[1] = _errcmn::err_ev_to_JS(err, "Target startup error: ")->ToObject();
-					info->targetStartCB->Call(Context::GetCurrent()->Global(),2,argv);
-				}
+			if(!err.hasErr()) {
+				argv[0] = Nan::New((uint32_t) info->targId);
+				info->targetStartCB->Call(Nan::GetCurrentContext()->Global(),1,argv);
+			} else {
+				argv[0] = Nan::New((int32_t)-1);
+				argv[1] = _errcmn::err_ev_to_JS(err, "Target startup error: ")->ToObject();
+				info->targetStartCB->Call(Nan::GetCurrentContext()->Global(),2,argv);
 			}
 		}
 		delete info;
@@ -667,11 +669,11 @@ void GreaseLogger::start_target_cb(GreaseLogger *l, _errcmn::err_ev &err, void *
 }
 
 
-void GreaseLogger::callV8LogCallbacks(uv_async_t *h, int status ) {
+void GreaseLogger::callV8LogCallbacks(uv_async_t *h) {
 	GreaseLogger *l = GreaseLogger::setupClass();
 	GreaseLogger::logTarget::writeCBData data;
 	while(l->v8LogCallbacks.removeMv(data)) {
-		if(!data.t->logCallback.IsEmpty()) {
+		if(data.t->logCallback) {
 			_doV8Callback(data);
 		}
 	}
@@ -681,18 +683,30 @@ void GreaseLogger::_doV8Callback(GreaseLogger::logTarget::writeCBData &data) {
 	const unsigned argc = 2;
 	Local<Value> argv[argc];
 	if(data.b) {
-		argv[0] = String::New( data.b->handle.base, (int) data.b->handle.len );
-		argv[1] = Integer::NewFromUnsigned( data.t->myId );
-		data.t->logCallback->Call(Context::GetCurrent()->Global(),1,argv);
+		Nan::MaybeLocal<String> s = Nan::New( data.b->handle.base, (int) data.b->handle.len );
+		Local<String> sconv;
+		if(s.ToLocal(&sconv)) {
+			argv[0] = sconv;
+			argv[1] = Nan::New( data.t->myId );
+			data.t->logCallback->Call(1,argv);
+		} else {
+			ERROR_OUT("Memory: Could not convert for log target's callback (1)");
+		}
 		data.t->finalizeV8Callback(data.b);
 	} else if(data.overflow) {
 		int l = data.overflow->totalSize();
 		char *d = (char *) LMALLOC(l);
 		if(d) {
 			data.overflow->copyAllTo(d);
-			argv[0] = String::New( d, l );
-			argv[1] = Integer::NewFromUnsigned( data.t->myId );
-			data.t->logCallback->Call(Context::GetCurrent()->Global(),1,argv);
+			Local<String> sconv;
+			Nan::MaybeLocal<String> s = Nan::New( d, l );
+			if(s.ToLocal(&sconv)) {
+				argv[0] = sconv;
+				argv[1] = Nan::New( data.t->myId );
+				data.t->logCallback->Call(1,argv);
+			} else {
+				ERROR_OUT("Memory: Could not convert for log target's callback (2)");
+			}
 			LFREE(d);
 		} else {
 			ERROR_OUT("Error on LMALLOC. alloc was %d bytes.\n",l);
@@ -701,37 +715,38 @@ void GreaseLogger::_doV8Callback(GreaseLogger::logTarget::writeCBData &data) {
 	}
 }
 
-void GreaseLogger::callTargetCallback(uv_async_t *h, int status ) {
+void GreaseLogger::callTargetCallback(uv_async_t *h) {
 	target_start_info *info = NULL;
 	GreaseLogger *l = GreaseLogger::setupClass();
 	while(l->targetCallbackQueue.remove(info)) {
 		HEAVY_DBG_OUT("********* REMOVE targetCallbackQueue: %p\n", info);
 		const unsigned argc = 2;
 		Local<Value> argv[argc];
-		if(!info->targetStartCB.IsEmpty() && !info->targetStartCB->IsUndefined()) {
+		if(info->targetStartCB) {
 			if(!info->err.hasErr()) {
-				argv[0] = Integer::New(info->targId);
-				info->targetStartCB->Call(Context::GetCurrent()->Global(),1,argv);
+				argv[0] = Nan::New((int32_t) info->targId);
+				info->targetStartCB->Call(1,argv);
 			} else {
-				argv[0] = Integer::New(-1);
+				argv[0] = Nan::New((int32_t) -1);
 				argv[1] = _errcmn::err_ev_to_JS(info->err, "Target startup error: ")->ToObject();
-				info->targetStartCB->Call(Context::GetCurrent()->Global(),2,argv);
+				info->targetStartCB->Call(2,argv);
 			}
 		}
 		delete info;
 	}
+	uv_unref((uv_handle_t *)&l->asyncTargetCallback);  // don't hold up event loop for this call back queue
 }
 
-Handle<Value> GreaseLogger::createPTS(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLogger::createPTS) {
 
 	GreaseLogger *l = GreaseLogger::setupClass();
 	Local<Function> cb;
 
-	if(args.Length() < 1 || !args[0]->IsFunction()) {
-		return ThrowException(Exception::TypeError(String::New("createPTS: bad parameters")));
+	if(info.Length() < 1 || !info[0]->IsFunction()) {
+		Nan::ThrowError("Malformed call to addTarget()");
+		return;
 	} else {
-		cb = Local<Function>::Cast(args[0]);
+		cb = Local<Function>::Cast(info[0]);
 	}
 
 	char *slavename = NULL;
@@ -757,18 +772,18 @@ Handle<Value> GreaseLogger::createPTS(const Arguments& args) {
 
 	if(err.hasErr() || !slavename) {
 		argv[0] = _errcmn::err_ev_to_JS(err, "Error in creating pseudo-terminal: ")->ToObject();
-		cb->Call(Context::GetCurrent()->Global(),1,argv);
+		cb->Call(Nan::GetCurrentContext()->Global(),1,argv);
 	} else {
-		argv[0] = v8::Local<v8::Value>::New(v8::Null());
+		argv[0] = Nan::Null();
 
-		Local<Object> obj = Object::New();
-		obj->Set(String::New("fd"),Int32::New(fdm));
-		obj->Set(String::New("path"),String::New(slavename,strlen(slavename)));
+		Local<Object> obj = Nan::New<Object>();
+		Nan::Set(obj,Nan::New("fd").ToLocalChecked(),Nan::New((int32_t)fdm));
+		Nan::Set(obj,Nan::New("path").ToLocalChecked(),
+				Nan::New(slavename,strlen(slavename)).ToLocalChecked());
 		argv[1] = obj;
-		cb->Call(Context::GetCurrent()->Global(),2,argv);
+		cb->Call(Nan::GetCurrentContext()->Global(),2,argv);
 	}
 
-	return scope.Close(Undefined());
 }
 
 
@@ -779,20 +794,18 @@ Handle<Value> GreaseLogger::createPTS(const Arguments& args) {
  *
  * @return v8::Undefined
  */
-Handle<Value> GreaseLogger::AddTagLabel(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLogger::AddTagLabel) {
 
 	GreaseLogger *l = GreaseLogger::setupClass();
 
-	if(args.Length() > 1 && args[0]->IsUint32() && args[1]->IsString()) {
-		v8::String::Utf8Value v8str(args[1]->ToString());
+	if(info.Length() > 1 && info[0]->IsUint32() && info[1]->IsString()) {
+		Nan::Utf8String v8str(info[1]->ToString());
 		logLabel *label = logLabel::fromUTF8(v8str.operator *(),v8str.length());
-		l->tagLabels.addReplace(args[0]->Uint32Value(),label);
+		l->tagLabels.addReplace(info[0]->Uint32Value(),label);
 	} else {
-		return ThrowException(Exception::TypeError(String::New("addTagLabel: bad parameters")));
+		return Nan::ThrowTypeError("addTagLabel: bad parameters");
 	}
 
-	return scope.Close(Undefined());
 };
 
 /**
@@ -801,20 +814,17 @@ Handle<Value> GreaseLogger::AddTagLabel(const Arguments& args) {
  *
  * @return v8::Undefined
  */
-Handle<Value> GreaseLogger::AddOriginLabel(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLogger::AddOriginLabel) {
 
 	GreaseLogger *l = GreaseLogger::setupClass();
 
-	if(args.Length() > 1 && args[0]->IsUint32() && args[1]->IsString()) {
-		v8::String::Utf8Value v8str(args[1]->ToString());
+	if(info.Length() > 1 && info[0]->IsUint32() && info[1]->IsString()) {
+		Nan::Utf8String v8str(info[1]->ToString());
 		logLabel *label = logLabel::fromUTF8(v8str.operator *(),v8str.length());
-		l->originLabels.addReplace(args[0]->Uint32Value(),label);
+		l->originLabels.addReplace(info[0]->Uint32Value(),label);
 	} else {
-		return ThrowException(Exception::TypeError(String::New("addOriginLabel: bad parameters")));
+		return Nan::ThrowTypeError("addOriginLabel: bad parameters");
 	}
-
-	return scope.Close(Undefined());
 };
 
 
@@ -824,36 +834,30 @@ Handle<Value> GreaseLogger::AddOriginLabel(const Arguments& args) {
  *
  * @return v8::Undefined
  */
-Handle<Value> GreaseLogger::AddLevelLabel(const Arguments& args) {
-	HandleScope scope;
-
+NAN_METHOD(GreaseLogger::AddLevelLabel) {
 	GreaseLogger *l = GreaseLogger::setupClass();
 
-	if(args.Length() > 1 && args[0]->IsUint32() && args[1]->IsString()) {
-		v8::String::Utf8Value v8str(args[1]->ToString());
+	if(info.Length() > 1 && info[0]->IsUint32() && info[1]->IsString()) {
+		Nan::Utf8String v8str(info[1]->ToString());
 		logLabel *label = logLabel::fromUTF8(v8str.operator *(),v8str.length());
-		uint32_t v = args[0]->Uint32Value();
+		uint32_t v = info[0]->Uint32Value();
 		l->levelLabels.addReplace(v,label);
 	} else {
-		return ThrowException(Exception::TypeError(String::New("addLevelLabel: bad parameters")));
+		return Nan::ThrowTypeError("addLevelLabel: bad parameters");
 	}
-
-	return scope.Close(Undefined());
 };
 
-Handle<Value> GreaseLogger::ModifyDefaultTarget(const Arguments& args) {
-	HandleScope scope;
-
-	if(args.Length() > 0 && args[0]->IsObject()){
+NAN_METHOD(GreaseLogger::ModifyDefaultTarget) {
+	if(info.Length() > 0 && info[0]->IsObject()){
 
 		logTarget *targ = GreaseLogger::LOGGER->defaultTarget;
-		Local<Object> jsTarg = args[0]->ToObject();
+		Local<Object> jsTarg = info[0]->ToObject();
 
-		Local<Value> jsDelim = jsTarg->Get(String::New("delim"));
-		Local<Value> jsDelimOut = jsTarg->Get(String::New("delim_output"));
+		Local<Value> jsDelim = jsTarg->Get(Nan::New("delim").ToLocalChecked());
+		Local<Value> jsDelimOut = jsTarg->Get(Nan::New("delim_output").ToLocalChecked());
 		// If either of these is set, the user means to change the default target
-		Local<Value> jsTTY = jsTarg->Get(String::New("tty"));
-		Local<Value> jsFile = jsTarg->Get(String::New("file"));
+		Local<Value> jsTTY = jsTarg->Get(Nan::New("tty").ToLocalChecked());
+		Local<Value> jsFile = jsTarg->Get(Nan::New("file").ToLocalChecked());
 
 		bool makenewtarget = false;
 
@@ -893,9 +897,9 @@ Handle<Value> GreaseLogger::ModifyDefaultTarget(const Arguments& args) {
 			int size = GreaseLogger::LOGGER->Opts.bufferSize;
 			GreaseLogger::LOGGER->Opts.unlock();
 
-			Local<Value> jsMode = jsTarg->Get(String::New("mode"));
-			Local<Value> jsFlags = jsTarg->Get(String::New("flags"));
-			Local<Value> jsRotate = jsTarg->Get(String::New("rotate"));
+			Local<Value> jsMode = jsTarg->Get(Nan::New("mode").ToLocalChecked());
+			Local<Value> jsFlags = jsTarg->Get(Nan::New("flags").ToLocalChecked());
+			Local<Value> jsRotate = jsTarg->Get(Nan::New("rotate").ToLocalChecked());
 			int mode = DEFAULT_MODE_FILE_TARGET;
 			int flags = DEFAULT_FLAGS_FILE_TARGET;
 			if(jsMode->IsInt32()) {
@@ -909,16 +913,16 @@ Handle<Value> GreaseLogger::ModifyDefaultTarget(const Arguments& args) {
 			i->cb = NULL;
 			i->targId = DEFAULT_TARGET;
 
-			v8::String::Utf8Value v8str(jsFile);
-			if(args.Length() > 0 && args[1]->IsFunction())
-				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
+			Nan::Utf8String v8str(jsFile);
+			if(info.Length() > 0 && info[1]->IsFunction())
+				i->targetStartCB = new Nan::Callback(Local<Function>::Cast(info[1]));
 			fileTarget::rotationOpts opts;
 			if(jsRotate->IsObject()) {
 				Local<Object> jsObj = jsRotate->ToObject();
-				Local<Value> js_max_files = jsObj->Get(String::New("max_files"));
-				Local<Value> js_max_file_size = jsObj->Get(String::New("max_file_size"));
-				Local<Value> js_total_size = jsObj->Get(String::New("max_total_size"));
-				Local<Value> js_on_start = jsObj->Get(String::New("rotate_on_start"));
+				Local<Value> js_max_files = jsObj->Get(Nan::New("max_files").ToLocalChecked());
+				Local<Value> js_max_file_size = jsObj->Get(Nan::New("max_file_size").ToLocalChecked());
+				Local<Value> js_total_size = jsObj->Get(Nan::New("max_total_size").ToLocalChecked());
+				Local<Value> js_on_start = jsObj->Get(Nan::New("rotate_on_start").ToLocalChecked());
 				if(js_max_files->IsUint32()) {
 					opts.max_files = js_max_files->Uint32Value(); opts.enabled = true;
 				}
@@ -948,43 +952,42 @@ Handle<Value> GreaseLogger::ModifyDefaultTarget(const Arguments& args) {
 		}
 
 
-		Local<Value> jsFormat = jsTarg->Get(String::New("format"));
+		Local<Value> jsFormat = jsTarg->Get(Nan::New("format").ToLocalChecked());
 
 		if(jsFormat->IsObject() && targ) {
 			Local<Object> jsObj = jsFormat->ToObject();
-			Local<Value> jsKey = jsObj->Get(String::New("pre"));
+			Local<Value> jsKey = jsObj->Get(Nan::New("pre").ToLocalChecked());
 			if(jsKey->IsString()) {
 				v8::String::Utf8Value v8str(jsKey);
 				targ->setPreFormat(v8str.operator *(),v8str.length());
 			}
-			jsKey = jsObj->Get(String::New("time"));
+			jsKey = jsObj->Get(Nan::New("time").ToLocalChecked());
 			if(jsKey->IsString()) {
 				v8::String::Utf8Value v8str(jsKey);
 				targ->setTimeFormat(v8str.operator *(),v8str.length());
 			}
-			jsKey = jsObj->Get(String::New("level"));
+			jsKey = jsObj->Get(Nan::New("level").ToLocalChecked());
 			if(jsKey->IsString()) {
 				v8::String::Utf8Value v8str(jsKey);
 				targ->setLevelFormat(v8str.operator *(),v8str.length());
 			}
-			jsKey = jsObj->Get(String::New("tag"));
+			jsKey = jsObj->Get(Nan::New("tag").ToLocalChecked());
 			if(jsKey->IsString()) {
 				v8::String::Utf8Value v8str(jsKey);
 				targ->setTagFormat(v8str.operator *(),v8str.length());
 			}
-			jsKey = jsObj->Get(String::New("origin"));
+			jsKey = jsObj->Get(Nan::New("origin").ToLocalChecked());
 			if(jsKey->IsString()) {
 				v8::String::Utf8Value v8str(jsKey);
 				targ->setOriginFormat(v8str.operator *(),v8str.length());
 			}
-			jsKey = jsObj->Get(String::New("post"));
+			jsKey = jsObj->Get(Nan::New("post").ToLocalChecked());
 			if(jsKey->IsString()) {
 				v8::String::Utf8Value v8str(jsKey);
 				targ->setPostFormat(v8str.operator *(),v8str.length());
 			}
 		}
 	}
-	return scope.Close(Undefined());
 }
 
 /**
@@ -1001,25 +1004,24 @@ Handle<Value> GreaseLogger::ModifyDefaultTarget(const Arguments& args) {
  *      }
  * }
  */
-Handle<Value> GreaseLogger::AddFilter(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLogger::AddFilter) {
 	GreaseLogger *l = GreaseLogger::setupClass();
 	FilterId id;
 	TagId tagId = 0;
 	OriginId originId = 0;
 	TargetId targetId = 0;
 	LevelMask mask = ALL_LEVELS;
-	Handle<Value> ret = Boolean::New(false);
-	if(args.Length() > 0 && args[0]->IsObject()) {
-		Local<Object> jsObj = args[0]->ToObject();
+	Handle<Value> ret = Nan::New(false);
+	if(info.Length() > 0 && info[0]->IsObject()) {
+		Local<Object> jsObj = info[0]->ToObject();
 
 		bool ok = false;
 		bool set_disable = false;
-		Local<Value> jsTag = jsObj->Get(String::New("tag"));
-		Local<Value> jsOrigin = jsObj->Get(String::New("origin"));
-		Local<Value> jsTarget = jsObj->Get(String::New("target"));
-		Local<Value> jsMask = jsObj->Get(String::New("mask"));
-		Local<Value> jsDisable = jsObj->Get(String::New("disable"));
+		Local<Value> jsTag = jsObj->Get(Nan::New("tag").ToLocalChecked());
+		Local<Value> jsOrigin = jsObj->Get(Nan::New("origin").ToLocalChecked());
+		Local<Value> jsTarget = jsObj->Get(Nan::New("target").ToLocalChecked());
+		Local<Value> jsMask = jsObj->Get(Nan::New("mask").ToLocalChecked());
+		Local<Value> jsDisable = jsObj->Get(Nan::New("disable").ToLocalChecked());
 
 		if(jsTag->IsUint32()) {
 			tagId = (TagId) jsTag->Uint32Value();
@@ -1033,7 +1035,8 @@ Handle<Value> GreaseLogger::AddFilter(const Arguments& args) {
 			mask = jsMask->Uint32Value();
 			ok = true;
 		} else if (!jsMask->IsUndefined()) {
-			return ThrowException(Exception::TypeError(String::New("addFilter: bad parameters (mask)")));
+			Nan::ThrowTypeError("addFilter: bad parameters (mask)");
+			return;
 		}
 		if(jsTarget->IsUint32()) {
 			targetId = (OriginId) jsTarget->Uint32Value();
@@ -1049,26 +1052,27 @@ Handle<Value> GreaseLogger::AddFilter(const Arguments& args) {
 		}
 
 		if(!ok) {
-			return ThrowException(Exception::TypeError(String::New("addFilter: bad parameters")));
+			Nan::ThrowTypeError("addFilter: bad parameters");
+			return;
 		}
 
 		logLabel *preFormat = NULL;
 		logLabel *postFormat = NULL;
-		Local<Value> jsKey = jsObj->Get(String::New("pre"));
+		Local<Value> jsKey = jsObj->Get(Nan::New("pre").ToLocalChecked());
 		if(jsKey->IsString()) {
 			v8::String::Utf8Value v8str(jsKey);
 			preFormat = logLabel::fromUTF8(v8str.operator *(),v8str.length());
 		}
-		jsKey = jsObj->Get(String::New("post"));
+		jsKey = jsObj->Get(Nan::New("post").ToLocalChecked());
 		if(jsKey->IsString()) {
 			v8::String::Utf8Value v8str(jsKey);
 			postFormat= logLabel::fromUTF8(v8str.operator *(),v8str.length());
 		}
 
 		if(l->_addFilter(targetId,originId,tagId,mask,id,preFormat,postFormat))
-			ret = Integer::NewFromUnsigned(id);
+			ret = Nan::New((uint32_t) id);
 		else
-			ret = Boolean::New(false);
+			ret = Nan::New(false);
 
 		if(set_disable) {
 			Filter *found;
@@ -1076,35 +1080,33 @@ Handle<Value> GreaseLogger::AddFilter(const Arguments& args) {
 				found->_disabled = true;
 			}
 		}
-	} else
-		return ThrowException(Exception::TypeError(String::New("addFilter: bad parameters")));
-	return scope.Close(ret);
+	} else {
+		Nan::ThrowTypeError("addFilter: bad parameters");
+		return;
+	}
+	info.GetReturnValue().Set(v8::Local<Value>(ret));
 }
 
-Handle<Value> GreaseLogger::RemoveFilter(const Arguments& args) {
-	HandleScope scope;
-	return scope.Close(Undefined());
-
+NAN_METHOD(GreaseLogger::RemoveFilter) {
 }
 
-Handle<Value> GreaseLogger::ModifyFilter(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLogger::ModifyFilter) {
 	GreaseLogger *l = GreaseLogger::setupClass();
 	FilterId id;
 	TagId tagId = 0;
 	OriginId originId = 0;
 	LevelMask mask = ALL_LEVELS;
-	Handle<Value> ret = Boolean::New(false);
-	if(args.Length() > 0 && args[0]->IsObject()) {
-		Local<Object> jsObj = args[0]->ToObject();
+	Handle<Value> ret = Nan::New(false);
+	if(info.Length() > 0 && info[0]->IsObject()) {
+		Local<Object> jsObj = info[0]->ToObject();
 
 		bool ok = false;
-		Local<Value> jsTag = jsObj->Get(String::New("tag"));
-		Local<Value> jsOrigin = jsObj->Get(String::New("origin"));
-		Local<Value> jsTarget = jsObj->Get(String::New("target"));
-		Local<Value> jsMask = jsObj->Get(String::New("mask"));
-		Local<Value> jsDisable = jsObj->Get(String::New("disable"));
-		Local<Value> jsId = jsObj->Get(String::New("id"));
+		Local<Value> jsTag = jsObj->Get(Nan::New("tag").ToLocalChecked());
+		Local<Value> jsOrigin = jsObj->Get(Nan::New("origin").ToLocalChecked());
+		Local<Value> jsTarget = jsObj->Get(Nan::New("target").ToLocalChecked());
+		Local<Value> jsMask = jsObj->Get(Nan::New("mask").ToLocalChecked());
+		Local<Value> jsDisable = jsObj->Get(Nan::New("disable").ToLocalChecked());
+		Local<Value> jsId = jsObj->Get(Nan::New("id").ToLocalChecked());
 
 		if(jsTag->IsUint32()) {
 			tagId = (TagId) jsTag->Uint32Value();
@@ -1114,7 +1116,8 @@ Handle<Value> GreaseLogger::ModifyFilter(const Arguments& args) {
 		}
 		if(jsMask->IsUint32()) {
 			mask = jsMask->Uint32Value();
-			return ThrowException(Exception::TypeError(String::New("modifyFilter: bad parameters... can't modify mask")));
+			Nan::ThrowTypeError("modifyFilter: bad parameters... can't modify mask");
+			return;
 		}
 		if(jsId->IsUint32()) {
 			id = (OriginId) jsId->Uint32Value();
@@ -1125,7 +1128,8 @@ Handle<Value> GreaseLogger::ModifyFilter(const Arguments& args) {
 		}
 
 		if(!ok) {
-			return ThrowException(Exception::TypeError(String::New("modifyFilter: bad parameters")));
+			Nan::ThrowTypeError("modifyFilter: bad parameters");
+			return;
 		}
 
 		Filter *found = NULL;
@@ -1141,13 +1145,14 @@ Handle<Value> GreaseLogger::ModifyFilter(const Arguments& args) {
 				found->targetId = (TargetId) jsTarget->Uint32Value();
 			}
 
-			ret = Boolean::New(true);
+			ret = Nan::New(true);
 		} else
-			ret = Boolean::New(false);
+			ret = Nan::New(false);
 
-	} else
-		return ThrowException(Exception::TypeError(String::New("modifyFilter: bad parameters")));
-	return scope.Close(ret);
+	} else {
+		Nan::ThrowTypeError("modifyFilter: bad parameters");
+	}
+	info.GetReturnValue().Set(v8::Local<Value>(ret));
 }
 
 /**
@@ -1156,15 +1161,14 @@ Handle<Value> GreaseLogger::ModifyFilter(const Arguments& args) {
  *    newConnCB: function()
  * }
  */
-Handle<Value> GreaseLogger::AddSink(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLogger::AddSink) {
 	GreaseLogger *l = GreaseLogger::setupClass();
 
-	if(args.Length() > 0 && args[0]->IsObject()) {
-		Local<Object> jsSink = args[0]->ToObject();
-		Local<Value> isPipe = jsSink->Get(String::New("pipe"));
-		Local<Value> isUnixDgram = jsSink->Get(String::New("unixDgram"));
-		Local<Value> newConnCB = jsSink->Get(String::New("newConnCB")); // called when a new connection is made on the callback
+	if(info.Length() > 0 && info[0]->IsObject()) {
+		Local<Object> jsSink = info[0]->ToObject();
+		Local<Value> isPipe = jsSink->Get(Nan::New("pipe").ToLocalChecked());
+		Local<Value> isUnixDgram = jsSink->Get(Nan::New("unixDgram").ToLocalChecked());
+		Local<Value> newConnCB = jsSink->Get(Nan::New("newConnCB").ToLocalChecked()); // called when a new connection is made on the callback
 
 		if(isPipe->IsString()) {
 			v8::String::Utf8Value v8str(isPipe);
@@ -1197,13 +1201,10 @@ Handle<Value> GreaseLogger::AddSink(const Arguments& args) {
 
 			l->sinks.addReplace(id,base);
 		} else {
-			return ThrowException(Exception::TypeError(String::New("addSink: unsupported Sink type")));
+			Nan::ThrowError("addSink: unsupported Sink type");
 		}
 	} else
-		return ThrowException(Exception::TypeError(String::New("addSink: bad parameters")));
-
-
-	return scope.Close(Undefined());
+		Nan::ThrowTypeError("addSink: bad parameters");
 };
 
 
@@ -1235,22 +1236,22 @@ Handle<Value> GreaseLogger::AddSink(const Arguments& args) {
  *  // where id == the target's ID
  * }
  */
-Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLogger::AddTarget) {
 	GreaseLogger *l = GreaseLogger::setupClass();
 	uint32_t target = DEFAULT_TARGET;
 
 //	iterate_plhdr();
 
-	if(args.Length() > 1 && args[0]->IsObject()){
-		Local<Object> jsTarg = args[0]->ToObject();
-		Local<Value> isTty = jsTarg->Get(String::New("tty"));
-		Local<Value> isFile = jsTarg->Get(String::New("file"));
+	if(info.Length() > 1 && info[0]->IsObject()){
+		Local<Object> jsTarg = info[0]->ToObject();
+		Local<Value> isTty = jsTarg->Get(Nan::New("tty").ToLocalChecked());
+//		Local<Value> isFile = jsTarg->Get(Nan::New("file").ToLocalChecked());
+		Nan::MaybeLocal<Value> isFile = Nan::Get(jsTarg, Nan::New("file").ToLocalChecked());
 
 		l->Opts.lock();
 		int buffsize = l->Opts.bufferSize;
 		l->Opts.unlock();
-		Local<Value> jsBufSize = jsTarg->Get(String::New("bufferSize"));
+		Local<Value> jsBufSize = jsTarg->Get(Nan::New("bufferSize").ToLocalChecked());
 		if(jsBufSize->IsInt32()) {
 			buffsize = jsBufSize->Int32Value();
 			if(buffsize < 0) {
@@ -1266,20 +1267,20 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 		id = l->nextTargetId++;
 		uv_mutex_unlock(&l->nextIdMutex);
 
-		Local<Value> jsDelim = jsTarg->Get(String::New("delim"));
-		Local<Value> jsDelimOut = jsTarg->Get(String::New("delim_output"));
-		Local<Value> jsCallback = jsTarg->Get(String::New("callback"));
-		Local<Value> jsFormat = jsTarg->Get(String::New("format"));
+		Local<Value> jsDelim = jsTarg->Get(Nan::New("delim").ToLocalChecked());
+		Local<Value> jsDelimOut = jsTarg->Get(Nan::New("delim_output").ToLocalChecked());
+		Local<Value> jsCallback = jsTarg->Get(Nan::New("callback").ToLocalChecked());
+		Local<Value> jsFormat = jsTarg->Get(Nan::New("format").ToLocalChecked());
 		delim_data delims;
 
 		if(jsDelim->IsString()) {
-			v8::String::Utf8Value v8str(jsDelim);
+			Nan::Utf8String v8str(jsDelim);
 			delims.delim.malloc(v8str.length());
 			delims.delim.memcpy(v8str.operator *(),v8str.length());
 		}
 
 		if(jsDelimOut->IsString()) {
-			v8::String::Utf8Value v8str(jsDelimOut);
+			Nan::Utf8String v8str(jsDelimOut);
 			delims.delim_output.malloc(v8str.length());
 			delims.delim_output.memcpy(v8str.operator *(),v8str.length());
 		}
@@ -1291,21 +1292,25 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 //			i->system_start_info = data;
 			i->cb = start_target_cb;
 			i->targId = id;
-			if(args.Length() > 0 && args[1]->IsFunction())
-				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
+			if(info.Length() > 0 && info[1]->IsFunction()) {
+				i->targetStartCB = new Nan::Callback(Local<Function>::Cast(info[1]));
+				uv_ref((uv_handle_t*)&l->asyncTargetCallback); // hold up exit of the event loop until this call back is complete.
+			}
 			targ = new ttyTarget(buffsize, id, l, targetReady,  std::move(delims), i, v8str.operator *());
 		} else if (!isTty.IsEmpty() && isTty->IsInt32()) {
 			target_start_info *i = new target_start_info();
 //			i->system_start_info = data;
 			i->cb = start_target_cb;
 			i->targId = id;
-			if(args.Length() > 0 && args[1]->IsFunction())
-				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
+			if(info.Length() > 0 && info[1]->IsFunction()) {
+				uv_ref((uv_handle_t*)&l->asyncTargetCallback); // hold up exit of the event loop until this call back is complete.
+				i->targetStartCB = new Nan::Callback(Local<Function>::Cast(info[1]));
+			}
 			targ = ttyTarget::makeTTYTargetFromFD(isTty->ToInt32()->Value(), buffsize, id, l, targetReady,  std::move(delims), i);
-		} else if (isFile->IsString()) {
-			Local<Value> jsMode = jsTarg->Get(String::New("mode"));
-			Local<Value> jsFlags = jsTarg->Get(String::New("flags"));
-			Local<Value> jsRotate = jsTarg->Get(String::New("rotate"));
+		} else if (!isFile.IsEmpty()) {
+			Local<Value> jsMode = jsTarg->Get(Nan::New("mode").ToLocalChecked());
+			Local<Value> jsFlags = jsTarg->Get(Nan::New("flags").ToLocalChecked());
+			Local<Value> jsRotate = jsTarg->Get(Nan::New("rotate").ToLocalChecked());
 			int mode = DEFAULT_MODE_FILE_TARGET;
 			int flags = DEFAULT_FLAGS_FILE_TARGET;
 			if(jsMode->IsInt32()) {
@@ -1315,22 +1320,23 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 				flags = jsFlags->Int32Value();
 			}
 
-
-			v8::String::Utf8Value v8str(isFile);
+			Nan::Utf8String v8str(isFile.ToLocalChecked());
 //			obj->setIfName(v8str.operator *(),v8str.length());
 			target_start_info *i = new target_start_info();
 //			i->system_start_info = data;
-			if(args.Length() > 0 && args[1]->IsFunction())
-				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
+			if(info.Length() > 0 && info[1]->IsFunction()) {
+				i->targetStartCB = new Nan::Callback(Local<Function>::Cast(info[1]));
+				uv_ref((uv_handle_t*)&l->asyncTargetCallback); // hold up exit of the event loop until this call back is complete.
+			}
 			i->cb = start_target_cb;
 			i->targId = id;
 			fileTarget::rotationOpts opts;
 			if(jsRotate->IsObject()) {
 				Local<Object> jsObj = jsRotate->ToObject();
-				Local<Value> js_max_files = jsObj->Get(String::New("max_files"));
-				Local<Value> js_max_file_size = jsObj->Get(String::New("max_file_size"));
-				Local<Value> js_total_size = jsObj->Get(String::New("max_total_size"));
-				Local<Value> js_on_start = jsObj->Get(String::New("rotate_on_start"));
+				Local<Value> js_max_files = jsObj->Get(Nan::New("max_files").ToLocalChecked());
+				Local<Value> js_max_file_size = jsObj->Get(Nan::New("max_file_size").ToLocalChecked());
+				Local<Value> js_total_size = jsObj->Get(Nan::New("max_total_size").ToLocalChecked());
+				Local<Value> js_on_start = jsObj->Get(Nan::New("rotate_on_start").ToLocalChecked());
 				if(js_max_files->IsUint32()) {
 					opts.max_files = js_max_files->Uint32Value(); opts.enabled = true;
 				}
@@ -1357,15 +1363,17 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 //			i->system_start_info = data;
 			i->cb = start_target_cb;
 			i->targId = id;
-			if(args.Length() > 0 && args[1]->IsFunction())
-				i->targetStartCB = Persistent<Function>::New(Local<Function>::Cast(args[1]));
+			if(info.Length() > 0 && info[1]->IsFunction()) {
+				i->targetStartCB = new Nan::Callback(Local<Function>::Cast(info[1]));
+				uv_ref((uv_handle_t*)&l->asyncTargetCallback); // hold up exit of the event loop until this call back is complete.
+			}
 //			int buffer_size, uint32_t id, GreaseLogger *o,
 //							targetReadyCB cb, delim_data &_delim, target_start_info *readydata
 			targ = new callbackTarget(buffsize, id, l, targetReady, std::move(delims), i);
 			_errcmn::err_ev err;
 			targ->readyCB(true,err,targ);
 		} else {
-			return ThrowException(Exception::TypeError(String::New("Unknown target type passed into addTarget()")));
+			Nan::ThrowTypeError("Unknown target type passed into addTarget()");
 		}
 
 		if(jsCallback->IsFunction() && targ) {
@@ -1375,47 +1383,45 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
 
 		if(jsFormat->IsObject()) {
 			Local<Object> jsObj = jsFormat->ToObject();
-			Local<Value> jsKey = jsObj->Get(String::New("pre"));
+			Local<Value> jsKey = jsObj->Get(Nan::New("pre").ToLocalChecked());
 			if(jsKey->IsString()) {
-				v8::String::Utf8Value v8str(jsKey);
+				Nan::Utf8String v8str(jsKey);
 				targ->setPreFormat(v8str.operator *(),v8str.length());
 			}
-			jsKey = jsObj->Get(String::New("time"));
+			jsKey = jsObj->Get(Nan::New("time").ToLocalChecked());
 			if(jsKey->IsString()) {
-				v8::String::Utf8Value v8str(jsKey);
+				Nan::Utf8String v8str(jsKey);
 				targ->setTimeFormat(v8str.operator *(),v8str.length());
 			}
-			jsKey = jsObj->Get(String::New("level"));
+			jsKey = jsObj->Get(Nan::New("level").ToLocalChecked());
 			if(jsKey->IsString()) {
-				v8::String::Utf8Value v8str(jsKey);
+				Nan::Utf8String v8str(jsKey);
 				targ->setLevelFormat(v8str.operator *(),v8str.length());
 			}
-			jsKey = jsObj->Get(String::New("tag"));
+			jsKey = jsObj->Get(Nan::New("tag").ToLocalChecked());
 			if(jsKey->IsString()) {
-				v8::String::Utf8Value v8str(jsKey);
+				Nan::Utf8String v8str(jsKey);
 				targ->setTagFormat(v8str.operator *(),v8str.length());
 			}
-			jsKey = jsObj->Get(String::New("origin"));
+			jsKey = jsObj->Get(Nan::New("origin").ToLocalChecked());
 			if(jsKey->IsString()) {
-				v8::String::Utf8Value v8str(jsKey);
+				Nan::Utf8String v8str(jsKey);
 				targ->setOriginFormat(v8str.operator *(),v8str.length());
 			}
-			jsKey = jsObj->Get(String::New("post"));
+			jsKey = jsObj->Get(Nan::New("post").ToLocalChecked());
 			if(jsKey->IsString()) {
-				v8::String::Utf8Value v8str(jsKey);
+				Nan::Utf8String v8str(jsKey);
 				targ->setPostFormat(v8str.operator *(),v8str.length());
 			}
-			jsKey = jsObj->Get(String::New("pre_msg"));
+			jsKey = jsObj->Get(Nan::New("pre_msg").ToLocalChecked());
 			if(jsKey->IsString()) {
-				v8::String::Utf8Value v8str(jsKey);
+				Nan::Utf8String v8str(jsKey);
 				targ->setPreMsgFormat(v8str.operator *(),v8str.length());
 			}
 		}
-
 	} else {
-		return ThrowException(Exception::TypeError(String::New("Malformed call to addTarget()")));
+		Nan::ThrowTypeError("Malformed call to addTarget()");
 	}
-	return scope.Close(Undefined());
 }
 
 
@@ -1430,30 +1436,29 @@ Handle<Value> GreaseLogger::AddTarget(const Arguments& args) {
  * @method log
  *
  */
-Handle<Value> GreaseLogger::Log(const Arguments& args) {
+NAN_METHOD(GreaseLogger::Log) {
 	static extra_logMeta meta; // static - this call is single threaded from node.
 	ZERO_LOGMETA(meta.m);
-	HandleScope scope;
 	uint32_t target = DEFAULT_TARGET;
-	if(args.Length() > 1 && args[0]->IsString() && args[1]->IsInt32()){
+	if(info.Length() > 1 && info[0]->IsString() && info[1]->IsInt32()){
 		GreaseLogger *l = GreaseLogger::setupClass();
-		v8::String::Utf8Value v8str(args[0]->ToString());
-		meta.m.level = (uint32_t) args[1]->Int32Value(); // level
+		v8::String::Utf8Value v8str(info[0]->ToString());
+		meta.m.level = (uint32_t) info[1]->Int32Value(); // level
 
-		if(args.Length() > 2 && args[2]->IsInt32()) // tag
-			meta.m.tag = (uint32_t) args[2]->Int32Value();
+		if(info.Length() > 2 && info[2]->IsInt32()) // tag
+			meta.m.tag = (uint32_t) info[2]->Int32Value();
 		else
 			meta.m.tag = 0;
 
-		if(args.Length() > 3 && args[3]->IsInt32()) // origin
-			meta.m.origin = (uint32_t) args[3]->Int32Value();
+		if(info.Length() > 3 && info[3]->IsInt32()) // origin
+			meta.m.origin = (uint32_t) info[3]->Int32Value();
 		else
 			meta.m.origin = 0;
 
 		if(l->sift(meta.m)) {
-			if(args.Length() > 4 && args[4]->IsObject()) {
-				Local<Object> jsObj = args[4]->ToObject();
-				Local<Value> val = jsObj->Get(String::New("ignores"));
+			if(info.Length() > 4 && info[4]->IsObject()) {
+				Local<Object> jsObj = info[4]->ToObject();
+				Local<Value> val = jsObj->Get(Nan::New("ignores").ToLocalChecked());
 				if(val->IsArray()) {
 					Local<Array> array = v8::Local<v8::Array>::Cast(val);
 					uint32_t i = 0;
@@ -1476,25 +1481,23 @@ Handle<Value> GreaseLogger::Log(const Arguments& args) {
 			l->_log(meta.m,v8str.operator *(),v8str.length());
 		}
 	}
-	return scope.Close(Undefined());
 }
 
-Handle<Value> GreaseLogger::LogSync(const Arguments& args) {
+NAN_METHOD(GreaseLogger::LogSync) {
 	static logMeta meta; // static - this call is single threaded from node.
-	HandleScope scope;
 	uint32_t target = DEFAULT_TARGET;
-	if(args.Length() > 1 && args[0]->IsString() && args[1]->IsInt32()){
+	if(info.Length() > 1 && info[0]->IsString() && info[1]->IsInt32()){
 		GreaseLogger *l = GreaseLogger::setupClass();
-		v8::String::Utf8Value v8str(args[0]->ToString());
-		meta.level = (uint32_t) args[1]->Int32Value();
+		v8::String::Utf8Value v8str(info[0]->ToString());
+		meta.level = (uint32_t) info[1]->Int32Value();
 
-		if(args.Length() > 2 && args[2]->IsInt32()) // tag
-			meta.tag = (uint32_t) args[2]->Int32Value();
+		if(info.Length() > 2 && info[2]->IsInt32()) // tag
+			meta.tag = (uint32_t) info[2]->Int32Value();
 		else
 			meta.tag = 0;
 
-		if(args.Length() > 3 && args[3]->IsInt32()) // tag
-			meta.origin = (uint32_t) args[3]->Int32Value();
+		if(info.Length() > 3 && info[3]->IsInt32()) // tag
+			meta.origin = (uint32_t) info[3]->Int32Value();
 		else
 			meta.origin = 0;
 
@@ -1503,62 +1506,57 @@ Handle<Value> GreaseLogger::LogSync(const Arguments& args) {
 			l->_logSync(meta,v8str.operator *(),v8str.length());
 		}
 	}
-	return scope.Close(Undefined());
 }
 
 
-Handle<Value> GreaseLogger::DisableTarget(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLogger::DisableTarget) {
 	GreaseLogger *l = GreaseLogger::setupClass();
-	if(args.Length() > 0 && args[0]->IsUint32()){
-		uint32_t tnum = (uint32_t) args[0]->Uint32Value();
+	if(info.Length() > 0 && info[0]->IsUint32()){
+		uint32_t tnum = (uint32_t) info[0]->Uint32Value();
 		logTarget *t = NULL;
 		if(l->targets.find(tnum,t)) {
 			t->disableWrites(true);
-			return scope.Close(True());
+			info.GetReturnValue().Set(Nan::True());
 		} else {
 			ERROR_OUT("grease.disableTarget(%d) Bad parameters.\n", tnum);
-			return scope.Close(False());
+			info.GetReturnValue().Set(Nan::False());
 		}
 	} else {
 		ERROR_OUT("grease.disableTarget() Bad parameters.\n");
-		return scope.Close(False());
+		info.GetReturnValue().Set(Nan::False());
 	}
 }
 
-Handle<Value> GreaseLogger::EnableTarget(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLogger::EnableTarget) {
 	GreaseLogger *l = GreaseLogger::setupClass();
-	if(args.Length() > 0 && args[0]->IsUint32()){
-		uint32_t tnum = (uint32_t) args[0]->Uint32Value();
+	if(info.Length() > 0 && info[0]->IsUint32()){
+		uint32_t tnum = (uint32_t) info[0]->Uint32Value();
 		logTarget *t = NULL;
 		if(l->targets.find(tnum,t)) {
 			t->disableWrites(false);
-			return scope.Close(True());
+			info.GetReturnValue().Set(Nan::True());
 		} else {
 			ERROR_OUT("grease.enableTarget(%d) Unknown target.\n", tnum);
-			return scope.Close(False());
+			info.GetReturnValue().Set(Nan::False());
 		}
 	} else {
 		ERROR_OUT("grease.enableTarget() Bad parameters.\n");
-		return scope.Close(False());
+		info.GetReturnValue().Set(Nan::False());
 	}
 }
 
 
-Handle<Value> GreaseLogger::Flush(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLogger::Flush) {
 	GreaseLogger *l = GreaseLogger::setupClass();
-	if(args.Length() > 1 && args[0]->IsUint32()){
-		uint32_t tnum = (uint32_t) args[0]->Uint32Value();
-		logTarget *t = NULL;
+	if(info.Length() > 1 && info[0]->IsUint32()){
+		uint32_t tnum = (uint32_t) info[0]->Uint32Value();
+		GreaseLogger::logTarget *t = NULL;
 		if(l->targets.find(tnum,t)) {
 			t->flushAll();
 		}
 	} else {
 		l->flushAll();
 	}
-	return scope.Close(Undefined());
 
 }
 
@@ -1648,9 +1646,11 @@ int GreaseLogger::_logSync( const logMeta &meta, const char *s, int len) { // in
 }
 
 
-void GreaseLogger::Init() {
-	Local<FunctionTemplate> tpl = FunctionTemplate::New(New);
-	tpl->SetClassName(String::NewSymbol("GreaseLogger"));
+void GreaseLogger::Init(v8::Local<v8::Object> exports) {
+	Nan::HandleScope scope;
+
+	Local<FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
+	tpl->SetClassName(Nan::New("GreaseLogger").ToLocalChecked());
 	tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
 	tpl->PrototypeTemplate()->SetInternalFieldCount(2);
@@ -1666,36 +1666,54 @@ void GreaseLogger::Init() {
 //		}
 //	}
 
-	tpl->InstanceTemplate()->Set(String::NewSymbol("start"), FunctionTemplate::New(Start)->GetFunction());
-	tpl->InstanceTemplate()->Set(String::NewSymbol("flush"), FunctionTemplate::New(Flush)->GetFunction());
-	tpl->InstanceTemplate()->Set(String::NewSymbol("logSync"), FunctionTemplate::New(LogSync)->GetFunction());
-	tpl->InstanceTemplate()->Set(String::NewSymbol("log"), FunctionTemplate::New(Log)->GetFunction());
+	Nan::SetPrototypeMethod(tpl,"start",Start);
+	Nan::SetPrototypeMethod(tpl,"flush",Flush);
+	Nan::SetPrototypeMethod(tpl,"logSync",LogSync);
+	Nan::SetPrototypeMethod(tpl,"log",Log);
+	Nan::SetPrototypeMethod(tpl,"enableTarget",EnableTarget);
+	Nan::SetPrototypeMethod(tpl,"disableTarget",DisableTarget);
+	Nan::SetPrototypeMethod(tpl,"createPTS",createPTS);
+	Nan::SetPrototypeMethod(tpl,"setGlobalOpts",SetGlobalOpts);
+	Nan::SetPrototypeMethod(tpl,"addTagLabel",AddTagLabel);
+	Nan::SetPrototypeMethod(tpl,"addOriginLabel",AddOriginLabel);
+	Nan::SetPrototypeMethod(tpl,"addLevelLabel",AddLevelLabel);
+	Nan::SetPrototypeMethod(tpl,"modifyDefaultTarget",ModifyDefaultTarget);
+	Nan::SetPrototypeMethod(tpl,"addFilter",AddFilter);
+	Nan::SetPrototypeMethod(tpl,"removeFilter",RemoveFilter);
+	Nan::SetPrototypeMethod(tpl,"modifyFilter",ModifyFilter);
+	Nan::SetPrototypeMethod(tpl,"addTarget",AddTarget);
+	Nan::SetPrototypeMethod(tpl,"addSink",AddSink);
 
-	tpl->InstanceTemplate()->Set(String::NewSymbol("enableTarget"), FunctionTemplate::New(EnableTarget)->GetFunction());
-	tpl->InstanceTemplate()->Set(String::NewSymbol("disableTarget"), FunctionTemplate::New(DisableTarget)->GetFunction());
-
-	tpl->InstanceTemplate()->Set(String::NewSymbol("createPTS"), FunctionTemplate::New(createPTS)->GetFunction());
-
-	tpl->InstanceTemplate()->Set(String::NewSymbol("setGlobalOpts"), FunctionTemplate::New(SetGlobalOpts)->GetFunction());
-
-	tpl->InstanceTemplate()->Set(String::NewSymbol("addTagLabel"), FunctionTemplate::New(AddTagLabel)->GetFunction());
-	tpl->InstanceTemplate()->Set(String::NewSymbol("addOriginLabel"), FunctionTemplate::New(AddOriginLabel)->GetFunction());
-	tpl->InstanceTemplate()->Set(String::NewSymbol("addLevelLabel"), FunctionTemplate::New(AddLevelLabel)->GetFunction());
-
-	tpl->InstanceTemplate()->Set(String::NewSymbol("modifyDefaultTarget"), FunctionTemplate::New(ModifyDefaultTarget)->GetFunction());
-
-	tpl->InstanceTemplate()->Set(String::NewSymbol("addFilter"), FunctionTemplate::New(AddFilter)->GetFunction());
-	tpl->InstanceTemplate()->Set(String::NewSymbol("removeFilter"), FunctionTemplate::New(RemoveFilter)->GetFunction());
-	tpl->InstanceTemplate()->Set(String::NewSymbol("modifyFilter"), FunctionTemplate::New(ModifyFilter)->GetFunction());
-
-	tpl->InstanceTemplate()->Set(String::NewSymbol("addTarget"), FunctionTemplate::New(AddTarget)->GetFunction());
-	tpl->InstanceTemplate()->Set(String::NewSymbol("addSink"), FunctionTemplate::New(AddSink)->GetFunction());
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("start"), FunctionTemplate::New(Start)->GetFunction());
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("flush"), FunctionTemplate::New(Flush)->GetFunction());
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("logSync"), FunctionTemplate::New(LogSync)->GetFunction());
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("log"), FunctionTemplate::New(Log)->GetFunction());
+//
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("enableTarget"), FunctionTemplate::New(EnableTarget)->GetFunction());
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("disableTarget"), FunctionTemplate::New(DisableTarget)->GetFunction());
+//
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("createPTS"), FunctionTemplate::New(createPTS)->GetFunction());
+//
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("setGlobalOpts"), FunctionTemplate::New(SetGlobalOpts)->GetFunction());
+//
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("addTagLabel"), FunctionTemplate::New(AddTagLabel)->GetFunction());
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("addOriginLabel"), FunctionTemplate::New(AddOriginLabel)->GetFunction());
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("addLevelLabel"), FunctionTemplate::New(AddLevelLabel)->GetFunction());
+//
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("modifyDefaultTarget"), FunctionTemplate::New(ModifyDefaultTarget)->GetFunction());
+//
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("addFilter"), FunctionTemplate::New(AddFilter)->GetFunction());
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("removeFilter"), FunctionTemplate::New(RemoveFilter)->GetFunction());
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("modifyFilter"), FunctionTemplate::New(ModifyFilter)->GetFunction());
+//
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("addTarget"), FunctionTemplate::New(AddTarget)->GetFunction());
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("addSink"), FunctionTemplate::New(AddSink)->GetFunction());
 
 //	tpl->InstanceTemplate()->SetAccessor(String::New("lastErrorStr"), GetLastErrorStr, SetLastErrorStr);
 //	tpl->InstanceTemplate()->SetAccessor(String::New("_readChunkSize"), GetReadChunkSize, SetReadChunkSize);
 
-	GreaseLogger::constructor = Persistent<Function>::New(tpl->GetFunction());
-
+	constructor.Reset(tpl->GetFunction());
+	exports->Set(Nan::New("Logger").ToLocalChecked(), tpl->GetFunction());
 }
 
 
@@ -1706,16 +1724,15 @@ void GreaseLogger::Init() {
  * @param args
  * @return
  **/
-Handle<Value> GreaseLogger::New(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLogger::New) {
 
 	GreaseLogger* obj = NULL;
 
-	if (args.IsConstructCall()) {
+	if (info.IsConstructCall()) {
 	    // Invoked as constructor: `new MyObject(...)`
-		if(args.Length() > 0) {
-			if(!args[0]->IsObject()) {
-				return ThrowException(Exception::TypeError(String::New("Improper first arg to TunInterface cstor. Must be an object.")));
+		if(info.Length() > 0) {
+			if(!info[0]->IsObject()) {
+				Nan::ThrowTypeError("Improper first arg to TunInterface cstor. Must be an object.");
 			}
 
 			obj = GreaseLogger::setupClass();
@@ -1723,33 +1740,28 @@ Handle<Value> GreaseLogger::New(const Arguments& args) {
 			obj = GreaseLogger::setupClass();
 		}
 
-		obj->Wrap(args.This());
-	    return args.This();
+		obj->Wrap(info.This());
+		info.GetReturnValue().Set(info.This());
 	} else {
 	    // Invoked as plain function `MyObject(...)`, turn into construct call.
 	    const int argc = 1;
-	    Local<Value> argv[argc] = { args[0] };
-	    return scope.Close(constructor->NewInstance(argc, argv));
+	    Local<Value> argv[argc] = { info[0] };
+	    v8::Local<v8::Function> cons = Nan::New<v8::Function>(constructor);
+	    info.GetReturnValue().Set(cons->NewInstance(argc, argv));
 	  }
 
 }
 
-Handle<Value> GreaseLogger::NewInstance(const Arguments& args) {
-	HandleScope scope;
-	int n = args.Length();
-	Local<Object> instance;
-
-	if(args.Length() > 0) {
-		Handle<Value> argv[n];
-		for(int x=0;x<n;x++)
-			argv[x] = args[x];
-		instance = GreaseLogger::constructor->NewInstance(n, argv);
-	} else {
-		instance = GreaseLogger::constructor->NewInstance();
-	}
-
-	return scope.Close(instance);
-}
+//Handle<Value> GreaseLogger::NewInstance() {
+//	if(info.Length() > 0) {
+//		Handle<Value> argv[n];
+//		for(int x=0;x<n;x++)
+//			argv[x] = args[x];
+//		instance = GreaseLogger::constructor->NewInstance(n, argv);
+//	} else {
+//		instance = GreaseLogger::constructor->NewInstance();
+//	}
+//}
 
 
 #ifdef __cplusplus

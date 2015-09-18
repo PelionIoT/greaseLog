@@ -78,7 +78,7 @@ logger.addTarget({
 			    }
 			},function(tid2,err){
 
-
+				console.log("HEREHEREHEREHEREHEREHEREHEREHEREHEREHEREHEREHEREHEREHEREHEREHEREHEREHERE");
 
 
 
@@ -163,6 +163,11 @@ logger.addTarget({
 
 	});
 
+
+
+setTimeout(function(){
+
+}, 5000);
 // var testCallback = function(str,id) {
 // 	console.log("CB (" + id + ")>" + str + "<");
 // }

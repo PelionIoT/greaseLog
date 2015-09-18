@@ -1,7 +1,6 @@
-// DeviceJS
+// grease-log
 // (c) WigWag Inc 2014
 //
-// tuntap native interface
 
 
 //var build_opts = require('build_opts.js');
@@ -270,7 +269,7 @@ var setup = function(options) {
 
 
 	if(!instance && !client_only) {
-		instance = nativelib.newLogger();
+		instance = new nativelib.Logger();
 		instance.start(function(){              // replace dummy logger function with real functions... as soon as can.
 			_console_log("START!!!!!!!!!!!");
 			var levelsK = Object.keys(levels);
@@ -289,7 +288,7 @@ var setup = function(options) {
 			}
 		});
 	} else if(!instance && client_only) {
-		instance = nativelib.newClient();
+		instance = new nativelib.Client();
 		_console_log("START!!!!!!!!!!! CLIENT");
 		instance.start();
 
@@ -346,14 +345,27 @@ var setup = function(options) {
 			return instance.modifyFilter(obj);
 		}
 
-		this.createPTS = instance.createPTS;
-		this.addSink = instance.addSink;
+		this.createPTS = function() {
+			return instance.createPTS.apply(instance,arguments);
+		}
 
-		this.addOriginLabel = instance.addOriginLabel;
+		this.addSink = function() {
+			return instance.addSink.apply(instance,arguments);
+		}
 
-		this.modifyDefaultTarget = instance.modifyDefaultTarget;
-		this.enableTarget = instance.enableTarget;
-		this.disableTarget = instance.disableTarget;
+		this.addOriginLabel = function(){
+			return instance.addOriginLabel.apply(instance,arguments);
+		}
+
+		this.modifyDefaultTarget = function() {
+			return instance.modifyDefaultTarget.apply(instance,arguments);
+		}
+		this.enableTarget = function() {
+			return instance.enableTarget.apply(instance,arguments);
+		}
+		this.disableTarget = function() {
+			return instance.disableTarget.apply(instance,arguments);
+		}
 	}
 
 

@@ -13,6 +13,8 @@
 #include <uv.h>
 #include <node_buffer.h>
 
+#include "nan.h"
+
 using namespace node;
 using namespace v8;
 
@@ -28,6 +30,7 @@ using namespace v8;
 
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <uv.h>
 #include <time.h>
@@ -45,7 +48,7 @@ using namespace v8;
 #include "grease_client.h"
 #include "error-common.h"
 
-#include <google/tcmalloc.h>
+#include <gperftools/tcmalloc.h>
 
 #define LMALLOC tc_malloc_skip_new_handler
 #define LCALLOC tc_calloc
@@ -109,10 +112,17 @@ struct uint64_t_eqstrP {
                 (type *)( (char *)__mptr - offsetof(type,member) );})
 #endif
 
+#if UV_VERSION_MAJOR < 1
 #define ERROR_UV(msg, code, loop) do {                                              \
   uv_err_t __err = uv_last_error(loop);                                             \
   fprintf(stderr, "%s: [%s: %s]\n", msg, uv_err_name(__err), uv_strerror(__err));   \
-} while(0);
+} while(0)
+#else
+#define ERROR_UV(msg, code, loop) do {                                              \
+		  fprintf(stderr, "%s: [%s: %s]\n", msg, uv_err_name(code), uv_strerror(code));                \
+		} while(0)
+#endif
+
 
 //  assert(0);
 
@@ -181,7 +191,7 @@ struct uint64_t_eqstrP {
 const int MAX_IF_NAME_LEN = 16;
 
 
-class GreaseLogger : public node::ObjectWrap {
+class GreaseLogger : public Nan::ObjectWrap {
 public:
 	typedef void (*actionCB)(GreaseLogger *, _errcmn::err_ev &err, void *data);
 
@@ -218,7 +228,7 @@ public:
 			if(handle.base) LFREE(handle.base);
 			handle.len = len+1;
 			handle.base = (char *) LMALLOC(handle.len);
-			::memset(handle.base,0,(int) handle.len);
+			::memset((void *)handle.base,(int) 0,handle.len);
 			::memcpy(handle.base,buffer,len);
 			used = handle.len;
 		}
@@ -232,7 +242,7 @@ public:
 			used = o.used; o.used =0;
 			o.handle.base = NULL;
 			o.handle.len = 0;
-			o.return_cb = o.return_cb; o.return_cb = NULL;
+			return_cb = o.return_cb; o.return_cb = NULL;
 		}
 		void malloc(int n) {
 			if(handle.base) LFREE(handle.base);
@@ -301,7 +311,7 @@ public:
 			handle = o.handle;
 			o.handle.base = NULL;
 			o.handle.len = 0;
-			o.return_cb = o.return_cb; o.return_cb = NULL;
+			return_cb = o.return_cb; o.return_cb = NULL;
 			return *this;
 		}
 	};
@@ -478,14 +488,14 @@ public:
 		_errcmn::err_ev err;      // used if above is true
 		actionCB cb;
 //		start_info *system_start_info;
-		Handle<Function> targetStartCB;
+		Nan::Callback *targetStartCB;
 		TargetId targId;
-		target_start_info() : needsAsyncQueue(false), err(), cb(NULL), targetStartCB(), targId(0) {}
+		target_start_info() : needsAsyncQueue(false), err(), cb(NULL), targetStartCB(NULL), targId(0) {}
 		target_start_info& operator=(target_start_info&& o) {
 			if(o.err.hasErr())
 				err = std::move(o.err);
 			cb = o.cb; o.cb = NULL;
-			targetStartCB = o.targetStartCB; o.targetStartCB.Clear();
+			targetStartCB = o.targetStartCB; o.targetStartCB = NULL;
 			targId = o.targId;
 			return *this;
 		}
@@ -642,6 +652,9 @@ protected:
 	};
 
 
+	/**
+	 * NOT COMPLETE
+	 */
 	class PipeSink final : public Sink, virtual public heapBuf::heapBufManager  {
 	protected:
 		TWlib::tw_safeCircular<heapBuf *, LoggerAlloc > buffers;
@@ -816,6 +829,17 @@ protected:
 			if(status == 0 ) {
 				PipeClient *client = new PipeClient(sink);
 				int r;
+#if UV_VERSION_MAJOR > 0
+				if((r = uv_accept(server, (uv_stream_t *)&client->client)) < 0) {
+					ERROR_OUT("PipeSink: Failed accept() %s\n", uv_strerror(r));
+					delete sink;
+				} else {
+//					if(uv_read_start((uv_stream_t *)&client->client,PipeSink::alloc_cb, PipeClient::on_read)) {
+//
+//					}
+				}
+
+#else
 				if((r = uv_accept(server, (uv_stream_t *)&client->client))==0) {
 					ERROR_OUT("PipeSink: Failed accept()\n", uv_strerror(uv_last_error(sink->loop)));
 					delete sink;
@@ -824,6 +848,7 @@ protected:
 
 					}
 				}
+#endif
 			} else {
 				ERROR_OUT("Sink: on_new_conn: Error on status: %d\n",status);
 			}
@@ -1033,7 +1058,7 @@ protected:
 						ERROR_PERROR("UnixDgramSink: Failed to pipe() for SOCK_DGRAM socket.\n", errno);
 					} else {
 						fcntl(wakeup_pipe[PIPE_WAIT], F_SETFL, O_NONBLOCK);
-						memset(&sink_dgram_addr,0,sizeof(sink_dgram_addr));
+						::memset(&sink_dgram_addr,0,sizeof(sink_dgram_addr));
 						sink_dgram_addr.sun_family = AF_UNIX;
 						unlink(path); // get rid of it if it already exists
 						strcpy(sink_dgram_addr.sun_path,path);
@@ -1452,7 +1477,7 @@ protected:
 //		uv_work_t work;
 		nodeCommand cmd;
 		int _errno; // the errno that happened on read if an error occurred.
-		v8::Persistent<Function> callback;
+		Nan::Callback *callback;
 //		v8::Persistent<Function> onFailureCB;
 //		v8::Persistent<Object> buffer; // Buffer object passed in
 //		char *_backing; // backing of the passed in Buffer
@@ -1468,16 +1493,16 @@ protected:
 		}
 		nodeCmdReq(nodeCmdReq &) = delete;
 		nodeCmdReq() : cmd(nodeCommand::NOOP), _errno(0), callback(), self(NULL) {}
-		nodeCmdReq(nodeCmdReq &&o) :cmd(o.cmd), _errno(o._errno), callback(), self(o.self) {
-			if(!o.callback.IsEmpty()) {
-				callback = o.callback; o.callback.Clear();
+		nodeCmdReq(nodeCmdReq &&o) :cmd(o.cmd), _errno(o._errno), callback(NULL), self(o.self) {
+			if(o.callback) {
+				callback = o.callback; o.callback = NULL;
 			}
 		};
 		nodeCmdReq& operator=(nodeCmdReq&& o) {
 			cmd = o.cmd;
 			_errno = o._errno;
-			if(!o.callback.IsEmpty()) {
-				callback = o.callback; o.callback.Clear();
+			if(o.callback) {
+				callback = o.callback; o.callback = NULL;
 			}
 			return *this;
 		}
@@ -1493,7 +1518,7 @@ protected:
 		target_start_info *readyData;
 		logBuf *_buffers[NUM_BANKS];
 		bool logCallbackSet; // if true, logCallback (below) is set (we prefer to not touch any v8 stuff, when outside the v8 thread)
-		Persistent<Function>  logCallback;
+		Nan::Callback *logCallback;
 		delim_data delim;
 
 
@@ -1738,7 +1763,7 @@ protected:
 			uv_mutex_lock(&writeMutex);
 			if(!func.IsEmpty()) {
 				logCallbackSet = true;
-				logCallback = Persistent<Function>::New(func);
+				logCallback = new Nan::Callback(func);
 			}
 			uv_mutex_unlock(&writeMutex);
 		}
@@ -2124,7 +2149,12 @@ protected:
 				t->readyCB(true,err,t);
 			} else {
 				ERROR_OUT("Error opening file %s\n", t->myPath);
+#if (UV_VERSION_MAJOR > 0)
+				ERROR_UV("Error opening file.\n", req->result, NULL);
+				err.setError(req->result);
+#else
 				err.setError(req->errorno);
+#endif
 				t->readyCB(false,err,t);
 			}
 		}
@@ -2139,41 +2169,64 @@ protected:
 //				t->readyCB(true,err,t);
 			} else {
 				ERROR_OUT("Error opening file %s\n", t->myPath);
+#if (UV_VERSION_MAJOR > 0)
+				ERROR_UV("Error opening file.\n", req->result, NULL);
+				err.setError(req->result);
+#else
 				err.setError(req->errorno);
+#endif
 //				t->readyCB(false,err,t);
 			}
+		}
+
+		static void check_and_maybe_rotate(fileTarget &ft, uint32_t *sz=nullptr) {
+			uv_rwlock_wrlock(&ft.wrLock);
+			ft.submittedWrites--;
+			if(sz)
+				ft.current_size += *sz;
+
+			HEAVY_DBG_OUT("sub: %d\n",ft.submittedWrites);
+
+			if(ft.submittedWrites < 1 && ft.filerotation.enabled) {
+				if(ft.current_size > ft.filerotation.max_file_size) {
+					HEAVY_DBG_OUT("Rotate: past max file size\n");
+					uv_fs_close(ft.owner->loggerLoop, &ft.fileFs, ft.fileHandle, NULL);
+					// TODO close file..
+					ft.rotate_files();
+					// TODO open new file..
+					int r = uv_fs_open(ft.owner->loggerLoop, &ft.fileFs, ft.myPath, ft.myFlags, ft.myMode, NULL); // use default loop because we need on_open() cb called in event loop of node.js
+#if (UV_VERSION_MAJOR > 0)
+//					DBG_OUT("uv_fs_open: return was: %d : %d\n", r); // poorly documented, but as sync func, r is the FD
+					if(r >= 0)
+						on_open_for_rotate(&ft.fileFs); // and the FD is also in ft.fileFs struct.
+#else
+					if(r != -1)
+						on_open_for_rotate(&ft.fileFs);
+#endif
+					else {
+						ERROR_PERROR("Error opening log file: %s\n", errno, ft.myPath);
+					}
+				}
+			}
+			uv_rwlock_wrunlock(&ft.wrLock);
 		}
 
 		static void write_cb(uv_fs_t* req) {
 //			HEAVY_DBG_OUT("write_cb");
 			HEAVY_DBG_OUT("file: write_cb()");
+#if (UV_VERSION_MAJOR > 0)
+			if(req->result < 0) {
+				ERROR_UV("file: write_cb() ", req->result, NULL);
+			}
+#else
 			if(req->errorno) {
 				ERROR_PERROR("file: write_cb() ",req->errorno);
 			}
+#endif
 			writeCBData *d = (writeCBData *) req->data;
 			fileTarget *ft = (fileTarget *) d->t;
 
-			uv_rwlock_wrlock(&ft->wrLock);
-			ft->submittedWrites--;
-
-			HEAVY_DBG_OUT("sub: %d\n",ft->submittedWrites);
-			// TODO - check for file rotation
-			if(ft->submittedWrites < 1 && ft->filerotation.enabled) {
-				if(ft->current_size > ft->filerotation.max_file_size) {
-					HEAVY_DBG_OUT("Rotate: past max file size\n");
-					uv_fs_close(ft->owner->loggerLoop, &ft->fileFs, ft->fileHandle, NULL);
-					// TODO close file..
-					ft->rotate_files();
-					// TODO open new file..
-					int r = uv_fs_open(ft->owner->loggerLoop, &ft->fileFs, ft->myPath, ft->myFlags, ft->myMode, NULL); // use default loop because we need on_open() cb called in event loop of node.js
-					if(r != -1)
-						on_open_for_rotate(&ft->fileFs);
-					else {
-						ERROR_PERROR("Error opening log file: %s\n", errno, ft->myPath);
-					}
-				}
-			}
-			uv_rwlock_wrunlock(&ft->wrLock);
+			check_and_maybe_rotate(*ft);
 
 			d->t->returnBuffer(d->b,false,d->nocallback);
 			uv_fs_req_cleanup(req);
@@ -2181,9 +2234,15 @@ protected:
 		}
 		static void write_overflow_cb(uv_fs_t* req) {
 			HEAVY_DBG_OUT("overflow_cb");
+#if (UV_VERSION_MAJOR > 0)
+			if(req->result < 0) {
+				ERROR_UV("file: write_overflow_cb() ", req->result, NULL);
+			}
+#else
 			if(req->errorno) {
 				ERROR_PERROR("file: write_overflow_cb() ",req->errorno);
 			}
+#endif
 			singleLog *b = (singleLog *) req->data;
 			b->decRef();
 			uv_fs_req_cleanup(req);
@@ -2205,7 +2264,15 @@ protected:
 			// a file rotation while writing
 			uv_rwlock_wrlock(&wrLock);
 			submittedWrites++;
+#if (UV_VERSION_MAJOR > 0)
+			// libuv 1.x switch to a pwritev style function...
+			uv_buf_t bz[1];
+			bz[0] = b->handle;
+			uv_fs_write(owner->loggerLoop, req, fileHandle, bz, 1, -1, write_cb);
+#else
 			uv_fs_write(owner->loggerLoop, req, fileHandle, (void *) b->handle.base, b->handle.len, -1, write_cb);
+#endif
+
 			uv_rwlock_wrunlock(&wrLock);
 //			write_cb(&req);  // debug, skip actual write
 			uv_mutex_unlock(&b->mutex);
@@ -2216,7 +2283,11 @@ protected:
 //		uv_fs_t reqSync[4];
 		static void sync_cb(uv_fs_t* req) {
 			uv_fs_req_cleanup(req);
+#if (UV_VERSION_MAJOR > 0)
+			HEAVY_DBG_OUT("file: sync() %d", req->result);
+#else
 			HEAVY_DBG_OUT("file: sync() %d", req->errorno);
+#endif
 			delete req;
 		}
 		void sync() {
@@ -2230,7 +2301,14 @@ protected:
 			uv_fs_t req;
 			uv_mutex_lock(&b->mutex);  // this lock should be ok, b/c write is async
 			HEAVY_DBG_OUT("file: flushSync() %d bytes", b->handle.len);
+#if (UV_VERSION_MAJOR > 0)
+			// libuv 1.x switch to a pwritev style function...
+			uv_buf_t bz[1];
+			bz[0] = b->handle;
+			uv_fs_write(owner->loggerLoop, &req, fileHandle, bz, 1, -1, write_cb);
+#else
 			uv_fs_write(owner->loggerLoop, &req, fileHandle, (void *) b->handle.base, b->handle.len, -1, NULL);
+#endif
 //			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, NULL);
 			uv_mutex_unlock(&b->mutex);
 			returnBuffer(b,true,nocallbacks);
@@ -2257,16 +2335,32 @@ protected:
 			struct iovec iov[MAX_OVERFLOW_BUFFERS];
 			int need = 0;
 			for(int p=0;p<b->N;p++) {
-				iov[p].iov_base = b->bufs[p]->buf.handle.base;
-				iov[p].iov_len = b->bufs[p]->buf.handle.len;
-				need += b->bufs[p]->buf.handle.len;
+				if(b->bufs[p] && b->bufs[p]->buf.handle.base) {
+					iov[p].iov_base = b->bufs[p]->buf.handle.base;
+					iov[p].iov_len = b->bufs[p]->buf.handle.len;
+					need += b->bufs[p]->buf.handle.len;
+				}
 			}
+
+			uv_rwlock_wrlock(&wrLock);
+			submittedWrites++;
+			uv_rwlock_wrunlock(&wrLock);
 
 			int got = writev(fileHandle, iov, b->N);
 
-			if(got < need) {
-				HEAVY_DBG_OUT("file target: writev() only wrote %d bytes. whatev. dropping it.", got);
+			if(got < 0) {
+				ERROR_PERROR("file: write_overflow_cb() ", errno);
+				uv_rwlock_wrlock(&wrLock);
+				submittedWrites--;
+				uv_rwlock_wrunlock(&wrLock);
+			} else {
+				if(got < need) {
+					HEAVY_DBG_OUT("file target: writev() only wrote %d bytes. whatev. dropping it.", got);
+				}
+				check_and_maybe_rotate(*this, (uint32_t *) &got);
 			}
+
+
 
 			// if is callback, then do that
 
@@ -2286,8 +2380,17 @@ protected:
 			uv_buf_t buf;
 			buf.base = const_cast<char *>(s);
 			buf.len = l;
+#if (UV_VERSION_MAJOR > 0)
+			// libuv 1.x switch to a pwritev style function...
+			uv_buf_t bz[1];
+			bz[0] = buf;
+			uv_fs_write(owner->loggerLoop, &req, fileHandle, bz, 1, -1, NULL);
+#else
 			uv_fs_write(owner->loggerLoop, &req, fileHandle, (void *) s, l, -1, NULL);
-//			uv_write(req, (uv_stream_t *) &tty, &buf, 1, NULL);
+#endif
+			current_size += l;
+
+			//			uv_write(req, (uv_stream_t *) &tty, &buf, 1, NULL);
 		}
 	protected:
 
@@ -2356,23 +2459,36 @@ protected:
 				if(filerotation.max_files && ((n+1) > filerotation.max_files)) { // remove file
 					int r = uv_fs_unlink(owner->loggerLoop,&req,f.path,NULL);
 					DBG_OUT("rotate_files::::::::::::::::: fs_unlink %s\n",f.path);
+#if (UV_VERSION_MAJOR > 0)
+					if(r < 0) {
+						if(r != UV_ENOENT) {
+							ERROR_OUT("file rotation - remove %s: %s\n", f.path, uv_strerror(r));
+						}
+					}
+#else
 					if(r) {
 						uv_err_t e = uv_last_error(owner->loggerLoop);
 						if(e.code != UV_ENOENT) {
 							ERROR_OUT("file rotation - remove %s: %s\n", f.path, uv_strerror(e));
 						}
 					}
+#endif
 				} else {  // move file to new name
 //					char *newname = rotatedFile::strRotateName(myPath,f.num+1);
 					rotatedFile new_f(myPath,f.num+1);
 					DBG_OUT("rotate_files::::::::::::::::: fs_rename\n");
 					int r = uv_fs_rename(owner->loggerLoop, &req, f.path, new_f.path, NULL);
+#if (UV_VERSION_MAJOR > 0)
+					if(r < 0) {
+						ERROR_OUT("file rotation - rename %s: %s\n", f.path, uv_strerror(r));
+#else
 					if(r) {
 						uv_err_t e = uv_last_error(owner->loggerLoop);
 						if(e.code != UV_OK) {
 							ERROR_OUT("file rotation - rename %s: %s\n", f.path, uv_strerror(e));
-						} else {
-						}
+					}
+#endif
+
 //						if(e.code != UV_ENOENT) {
 //							ERROR_OUT("file rotation - rename %s: %s\n", f.path, uv_strerror(e));
 //						}
@@ -2385,12 +2501,16 @@ protected:
 			rotatedFile new_f(myPath,1);
 
 			int r = uv_fs_rename(owner->loggerLoop, &req, myPath, new_f.path, NULL);
+#if (UV_VERSION_MAJOR > 0)
+			if(r < 0) {
+				ERROR_OUT("file rotation - rename %s: %s\n", new_f.path, uv_strerror(r));
+#else
 			if(r) {
 				uv_err_t e = uv_last_error(owner->loggerLoop);
 				if(e.code != UV_OK) {
 					ERROR_OUT("file rotation - rename %s: %s\n", new_f.path, uv_strerror(e));
-				} else {
 				}
+#endif
 			} else
 				tempFiles.addMv(new_f);
 			rotatedFiles.transferFrom(tempFiles);
@@ -2406,11 +2526,16 @@ protected:
 			rotatedFiles.clear();
 			// find existing file...
 			int r = uv_fs_stat(owner->loggerLoop, &req, myPath, NULL);
+#if (UV_VERSION_MAJOR > 0)
+			if(r < 0) {
+				ERROR_OUT("file rotation: %s\n", uv_strerror(r));
+#else
 			if(r) {
 				uv_err_t e = uv_last_error(owner->loggerLoop);
 				if(e.code != UV_ENOENT) {
 					ERROR_OUT("file rotation: %s\n", uv_strerror(e));
 				}
+#endif
 			} else {
 				// if the current file is too big - we need to rotate.
 				if(filerotation.max_file_size && filerotation.max_file_size < req.statbuf.st_size)
@@ -2424,12 +2549,20 @@ protected:
 				uv_fs_t req;
 				rotatedFile f(myPath,n);
 				int r = uv_fs_stat(owner->loggerLoop, &req, f.path, NULL);
+#if (UV_VERSION_MAJOR > 0)
+				if(r < 0) {
+					if(r != UV_ENOENT) {
+						ERROR_OUT("file rotation: [path:%s]: %s\n", f.path, uv_strerror(r));
+					}
+					break;
+#else
 				if(r) {
 					uv_err_t e = uv_last_error(owner->loggerLoop);
 					if(e.code && e.code != UV_ENOENT) {
 						ERROR_OUT("file rotation [path:%s]: %s\n", f.path, uv_strerror(e));
 					}
 					break;
+#endif
 				} else {
 					f.size = req.statbuf.st_size;
 					rotatedFiles.addMv(f);
@@ -2473,8 +2606,11 @@ protected:
 				}
 
 				int r = uv_fs_open(owner->loggerLoop, &fileFs, path, flags, mode, on_open); // use default loop because we need on_open() cb called in event loop of node.js
-
+#if (UV_VERSION_MAJOR > 0)
+				if (r < 0) ERROR_UV("initing file", r, NULL);
+#else
 				if (r) ERROR_UV("initing file", r, owner->loggerLoop);
+#endif
 			}
 		}
 
@@ -2598,9 +2734,16 @@ protected:
 	uv_async_t asyncInternalCommand;
 	uv_async_t asyncExternalCommand;
 	uv_timer_t flushTimer;
+
+#if (UV_VERSION_MAJOR > 0)
+	static void handleInternalCmd(uv_async_t *handle); // from in the class
+	static void handleExternalCmd(uv_async_t *handle); // from node
+	static void flushTimer_cb(uv_timer_t* handle);  // on a timer. this flushed buffers after a while
+#else
 	static void handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/); // from in the class
 	static void handleExternalCmd(uv_async_t *handle, int status /*UNUSED*/); // from node
 	static void flushTimer_cb(uv_timer_t* handle, int status);  // on a timer. this flushed buffers after a while
+#endif
 	static void mainThread(void *);
 
 	void setupDefaultTarget(actionCB cb, target_start_info *data);
@@ -2680,49 +2823,42 @@ public:
 	static void flushAll(bool nocallbacks = false);
 	static void flushAllSync(bool rotate = true,bool nocallbacks = false);
 
-//	static Handle<Value> Init(const Arguments& args);
-//	static void ExtendFrom(const Arguments& args);
-	static void Init();
-//	static void Shutdown();
+	static void Init(v8::Local<v8::Object> exports);
 
-    static Handle<Value> New(const Arguments& args);
-    static Handle<Value> NewInstance(const Arguments& args);
+    static NAN_METHOD(New);
+    static NAN_METHOD(NewInstance);
 
-    static Handle<Value> SetGlobalOpts(const Arguments& args);
+    static NAN_METHOD(SetGlobalOpts);
 
-    static Handle<Value> AddTagLabel(const Arguments& args);
-    static Handle<Value> AddOriginLabel(const Arguments& args);
-    static Handle<Value> AddLevelLabel(const Arguments& args);
+    static NAN_METHOD(AddTagLabel);
+    static NAN_METHOD(AddOriginLabel);
+    static NAN_METHOD(AddLevelLabel);
 
-    static Handle<Value> AddFilter(const Arguments& args);
-    static Handle<Value> RemoveFilter(const Arguments& args);
-    static Handle<Value> ModifyFilter(const Arguments& args);
+    static NAN_METHOD(AddFilter);
+    static NAN_METHOD(RemoveFilter);
+    static NAN_METHOD(ModifyFilter);
 
-    static Handle<Value> AddTarget(const Arguments& args);
-    static Handle<Value> AddSink(const Arguments& args);
+    static NAN_METHOD(AddTarget);
+    static NAN_METHOD(AddSink);
 
-    static Handle<Value> ModifyDefaultTarget(const Arguments& args);
+    static NAN_METHOD(ModifyDefaultTarget);
 
-    static Handle<Value> Start(const Arguments& args);
+    static NAN_METHOD(Start);
 
     // creates a new pseduo-terminal for use with TTY targets
-    static Handle<Value> createPTS(const Arguments& args);
+    static NAN_METHOD(createPTS);
 
-    static Handle<Value> DisableTarget(const Arguments& args);
-    static Handle<Value> EnableTarget(const Arguments& args);
-
-
-    static Handle<Value> Log(const Arguments& args);
-    static Handle<Value> LogSync(const Arguments& args);
-    static Handle<Value> Flush(const Arguments& args);
+    static NAN_METHOD(DisableTarget);
+    static NAN_METHOD(EnableTarget);
 
 
-//    static Handle<Value> Create(const Arguments& args);
-//    static Handle<Value> Open(const Arguments& args);
-//    static Handle<Value> Close(const Arguments& args);
+    static NAN_METHOD(Log);
+    static NAN_METHOD(LogSync);
+    static NAN_METHOD(Flush);
 
 
-    static Persistent<Function> constructor;
+
+    static Nan::Persistent<v8::Function> constructor;
 //    static Persistent<ObjectTemplate> prototype;
 
     // solid reference to TUN / TAP creation is: http://backreference.org/2010/03/26/tuntap-interface-tutorial/
@@ -2735,8 +2871,8 @@ public:
 protected:
 
 	// calls callbacks when target starts (if target was started in non-v8 thread
-	static void callTargetCallback(uv_async_t *h, int status );
-	static void callV8LogCallbacks(uv_async_t *h, int status );
+	static void callTargetCallback(uv_async_t *h);
+	static void callV8LogCallbacks(uv_async_t *h);
 	static void _doV8Callback(GreaseLogger::logTarget::writeCBData &data); // <--- only call this one from v8 thread!
 	static void start_target_cb(GreaseLogger *l, _errcmn::err_ev &err, void *d);
 	static void start_logger_cb(GreaseLogger *l, _errcmn::err_ev &err, void *d);

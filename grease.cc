@@ -9,6 +9,8 @@
 #include <v8.h>
 #include <node.h>
 
+#include "nan.h"
+
 #include <stdio.h>
 #include <string.h>
 #include <errno.h>
@@ -29,44 +31,37 @@ using namespace Grease;
 
 
 
-Handle<Value> ErrorFromErrno(const Arguments& args) {
-	HandleScope scope;
-
-	if(args.Length() > 0 && args[0]->Int32Value()) {
-		Local<Value> err = _errcmn::errno_to_JS(args[0]->Int32Value(),"netkit: ");
-		return scope.Close(err);
-	} else {
-		return scope.Close(Undefined());
+NAN_METHOD(ErrorFromErrno) {
+	if(info.Length() > 0 && info[0]->Int32Value()) {
+		Local<Value> err = _errcmn::errno_to_JS(info[0]->Int32Value(),"netkit: ");
+		info.GetReturnValue().Set(err);
 	}
-
 }
 
-Handle<Value> NewLogger(const Arguments& args) {
-	HandleScope scope;
+//NAN_METHOD(NewLogger) {
+//	info.GetReturnValue().Set(GreaseLogger::NewInstance(args));
+//
+//}
 
-	return scope.Close(GreaseLogger::NewInstance(args));
-
-}
-
-Handle<Value> NewLoggerClient(const Arguments& args) {
-	HandleScope scope;
-
-	return scope.Close(GreaseLoggerClient::NewInstance(args));
-
-}
+//Handle<Value> NewLoggerClient(const Arguments& args) {
+//	HandleScope scope;
+//
+//	return scope.Close(GreaseLoggerClient::NewInstance(args));
+//
+//}
 
 
 void InitAll(Handle<Object> exports, Handle<Object> module) {
 
-	exports->Set(String::NewSymbol("newLogger"), FunctionTemplate::New(NewLogger)->GetFunction());
-	exports->Set(String::NewSymbol("newClient"), FunctionTemplate::New(NewLoggerClient)->GetFunction());
+//	exports->Set(String::NewSymbol("newLogger"), FunctionTemplate::New(NewLogger)->GetFunction());
+//	exports->Set(String::NewSymbol("newClient"), FunctionTemplate::New(NewLoggerClient)->GetFunction());
 
-	GreaseLogger::Init();
-	GreaseLoggerClient::Init();
+	GreaseLogger::Init(exports);
+	GreaseLoggerClient::Init(exports);
 
-	Handle<Object> errconsts = Object::New();
+	Handle<Object> errconsts = Nan::New<Object>();
 	_errcmn::DefineConstants(errconsts);
-	exports->Set(String::NewSymbol("ERR"), errconsts);
+	Nan::Set(exports,Nan::New<String>("ERR").ToLocalChecked(), errconsts);
 
 }
 

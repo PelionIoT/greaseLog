@@ -1,6 +1,6 @@
 {
   "name": "grease-log",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Fast, production logging subsystem",
   "main": "index.js",
   "keywords": [
@@ -28,5 +28,8 @@
   "directories": {
     "test": "test"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "dependencies": {
+    "nan": "^2.0.9"
+  }
 }

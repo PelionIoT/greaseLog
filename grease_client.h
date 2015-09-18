@@ -32,8 +32,8 @@ extern "C" {
 #define SINK_LOG_PING_ACK ((uint32_t)0xF00DF11D)
 
 #define SIZEOF_SINK_LOG_PREAMBLE (sizeof(uint32_t))
-#define IS_SINK_PREAMBLE(p) (memcmp(p,&__grease_preamble,SIZEOF_SINK_LOG_PREAMBLE) == 0)
-#define IS_SINK_PING(p) (memcmp(p,&__grease_sink_ping,SIZEOF_SINK_LOG_PREAMBLE) == 0)
+#define IS_SINK_PREAMBLE(p) (memcmp((void *)p,&__grease_preamble,SIZEOF_SINK_LOG_PREAMBLE) == 0)
+#define IS_SINK_PING(p) (memcmp((void *)p,&__grease_sink_ping,SIZEOF_SINK_LOG_PREAMBLE) == 0)
 #define IS_SINK_PING_ACK(p) (memcmp(p,&__grease_sink_ping_ack,SIZEOF_SINK_LOG_PREAMBLE) == 0)
 #define GET_SIZE_FROM_PREAMBLE(p,d) (memcpy(&(d),((char *)(p))+(sizeof(uint32_t)),sizeof(uint32_t)))
 #define SET_SIZE_IN_HEADER(p,d) (memcpy(((char *)(p))+(sizeof(uint32_t)),&(d),sizeof(uint32_t)))

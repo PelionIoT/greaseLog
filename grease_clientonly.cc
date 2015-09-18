@@ -27,37 +27,34 @@ using namespace Grease;
 
 
 
+NAN_METHOD(ErrorFromErrno) {
+	Nan::EscapableHandleScope scope;
 
-
-Handle<Value> ErrorFromErrno(const Arguments& args) {
-	HandleScope scope;
-
-	if(args.Length() > 0 && args[0]->Int32Value()) {
-		Local<Value> err = _errcmn::errno_to_JS(args[0]->Int32Value(),"netkit: ");
-		return scope.Close(err);
+	if(info.Length() > 0 && info[0]->Int32Value()) {
+		Local<Value> err = _errcmn::errno_to_JS(info[0]->Int32Value(),"netkit: ");
+		scope.Escape(err);
 	} else {
-		return scope.Close(Undefined());
+		scope.Escape(Nan::Undefined());
 	}
-
 }
 
-Handle<Value> NewLoggerClient(const Arguments& args) {
-	HandleScope scope;
-
-	return scope.Close(GreaseLoggerClient::NewInstance(args));
-
-}
+//NAN_METHJNewLoggerClient(const Arguments& args) {
+//	HandleScope scope;
+//
+//	return scope.Close(GreaseLoggerClient::NewInstance(args));
+//
+//}
 
 
 void InitAll(Handle<Object> exports, Handle<Object> module) {
 
-	exports->Set(String::NewSymbol("newClient"), FunctionTemplate::New(NewLoggerClient)->GetFunction());
+//	exports->Set(String::NewSymbol("newClient"), FunctionTemplate::New(NewLoggerClient)->GetFunction());
 
-	GreaseLoggerClient::Init();
+	GreaseLoggerClient::Init(exports);
 
-	Handle<Object> errconsts = Object::New();
+	Handle<Object> errconsts = Nan::New<Object>();
 	_errcmn::DefineConstants(errconsts);
-	exports->Set(String::NewSymbol("ERR"), errconsts);
+	Nan::Set(exports,Nan::New<String>("ERR").ToLocalChecked(), errconsts);
 
 }
 

@@ -8,6 +8,7 @@
 #ifndef CLIENT_LOGGER_H_
 #define CLIENT_LOGGER_H_
 
+#include "nan.h"
 
 #include "grease_client.h"
 
@@ -16,7 +17,7 @@ namespace Grease {
 
 
 
-class GreaseLoggerClient : public node::ObjectWrap {
+class GreaseLoggerClient : public Nan::ObjectWrap {
 public:
 
 
@@ -29,10 +30,10 @@ public:
 		uint32_t levelFilterOutMask;
 		bool defaultFilterOut;
 		int maxSinkErrors;
-		Persistent<Function> onSinkFailureCB;
+		Nan::Callback *onSinkFailureCB;
 
 		Opts_t() : show_errors(false), callback_errors(false), levelFilterOutMask(0), defaultFilterOut(false),
-		 	 maxSinkErrors(SINK_MAX_ERRORS), onSinkFailureCB()
+		 	 maxSinkErrors(SINK_MAX_ERRORS), onSinkFailureCB(NULL)
 		{
 			uv_mutex_init(&mutex);
 		}
@@ -59,20 +60,20 @@ public:
 	int log(const logMeta &f, const char *s, int len); // does the work of logging (for users in C++)
 
 	static void Shutdown();
-	static void Init();
+	static void Init(v8::Local<v8::Object> exports);
 
-    static Handle<Value> New(const Arguments& args);
-    static Handle<Value> NewInstance(const Arguments& args);
+    static NAN_METHOD(New);
+//    static Handle<Value> NewInstance(const Arguments& args);
 
-    static Handle<Value> SetGlobalOpts(const Arguments& args);
+    static NAN_METHOD(SetGlobalOpts);
 
-    static Handle<Value> Start(const Arguments& args);
+    static NAN_METHOD(Start);
 
-    static Handle<Value> Log(const Arguments& args);
+    static NAN_METHOD(Log);
 
-    static Handle<Value> Flush(const Arguments& args);
+    static NAN_METHOD(Flush);
 
-    static Persistent<Function> constructor;
+    static Nan::Persistent<Function> constructor;
 
 
 //	void setErrno(int _errno, const char *m=NULL) {
