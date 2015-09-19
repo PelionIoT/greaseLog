@@ -387,6 +387,35 @@ var setup = function(options) {
 		instance.setGlobalOpts(obj);
 	};
 
+
+	var Writable = require('stream').Writable;
+
+	function WritableConsole(opt) {
+  		Writable.call(this, opt);
+ 	    this.logger = self;
+ 	    if(opt.level) {
+ 	    	this.level = opt.level;
+ 	    } else {
+ 	    	this.level = levels.log;
+ 	    }
+ 	}
+
+	util.inherits(WritableConsole, Writable);
+
+	WritableConsole.prototype._write = function(chunk, encoding, callback) {
+//		self._log(self.LEVELS.log,util.inspect(arguments));
+		if(util.isBuffer(chunk)) {			
+			this.logger._log(this.level,chunk.toString('utf8'));				
+		} else {
+			this.logger._log(this.level,chunk);				
+		}
+		callback();
+	}
+
+	this.getNewWritableConsole = function(levl) {
+		return new WritableConsole({level:levl});
+	}	
+
 }
 
 
