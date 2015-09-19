@@ -153,7 +153,7 @@ static void *local_log;
 __attribute__((visibility ("hidden"))) int (*grease_log)(const logMeta *f, const char *s, RawLogLen len) = NULL;
 
 
-static __thread char _grease_logstr_buffer[GREASE_C_MACRO_MAX_MESSAGE];
+static __thread char _grease_logstr_buffer[GREASE_C_MACRO_MAX_MESSAGE+1];
 
 #ifdef __cplusplus
 }
@@ -164,7 +164,9 @@ int grease_printf(const logMeta *m, const char *format, ... ) {
 	va_start (args, format);
 	RawLogLen len = (RawLogLen) vsnprintf (_grease_logstr_buffer,GREASE_C_MACRO_MAX_MESSAGE,format, args);
 	va_end (args);
-#ifndef GREASE_DISABLE
+//	_grease_logstr_buffer[GREASE_C_MACRO_MAX_MESSAGE] = '\0';
+	if(len > GREASE_C_MACRO_MAX_MESSAGE) len = GREASE_C_MACRO_MAX_MESSAGE;
+#ifndef GREASE_DISABLE0
 	if(grease_log != NULL) {
 		if(grease_log(m,_grease_logstr_buffer, len) == GREASE_OK) {
 			return GREASE_OK;
