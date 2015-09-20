@@ -786,7 +786,7 @@ NAN_METHOD(GreaseLogger::createPTS) {
 
 }
 
-
+const char GreaseLogger::empty_label[] = "--";
 
 /**
  * addTagLabel(id,label)

@@ -139,6 +139,8 @@ var testCallback = function(str,id) {
 					console.error("Hello. Error. " + n);				
 					console.warn("Hello. Warn." + n);				
 					console.dir({hello:"there", n: n});
+
+					logger.info("Hello log.");
 				}
 			},1000);
 // 		}

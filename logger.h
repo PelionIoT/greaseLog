@@ -1510,6 +1510,7 @@ protected:
 		}
 	};
 
+	static const char empty_label[];  // a marker for labels and other string with no value
 
 	class logTarget {
 	protected:
@@ -1631,15 +1632,21 @@ protected:
 					space = space - n;
 				}
 			}
-			if(m.tag > 0 && tagFormat.length() > 0 && space > 0) {
-				if(owner->tagLabels.find(m.tag,label) && label->length() > 0) {
+			if(tagFormat.length() > 0 && space > 0) {
+				if(m.tag > 0 && owner->tagLabels.find(m.tag,label) && label->length() > 0) {
 					n = snprintf(mem + (remain-space),space,tagFormat.buf.handle.base,label->buf.handle.base);
+					space = space - n;
+				} else {
+					n = snprintf(mem+(remain-space),space,tagFormat.buf.handle.base,empty_label);
 					space = space - n;
 				}
 			}
-			if(m.origin > 0 && originFormat.length() > 0 && space > 0) {
-				if(owner->originLabels.find(m.origin,label) && label->length() > 0) {
+			if(originFormat.length() > 0 && space > 0) {
+				if(m.origin > 0 && owner->originLabels.find(m.origin,label) && label->length() > 0) {
 					n = snprintf(mem+(remain-space),space,originFormat.buf.handle.base,label->buf.handle.base);
+					space = space - n;
+				} else {
+					n = snprintf(mem+(remain-space),space,originFormat.buf.handle.base,empty_label);
 					space = space - n;
 				}
 			}
