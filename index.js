@@ -22,6 +22,9 @@ var instance = null;
 var setup = function(options) {
 //	console.log("SETUP!!!!!!!!!!");
 
+	var PID = process.pid + 3000; // to avoid calling an Accessor constantly, if that's what this does. 
+		                          // we add 3000 so that we don't easily step on this when making origin labels
+
 	var TAGS = {};
 	var tagId = 1;
 
@@ -51,8 +54,6 @@ var setup = function(options) {
 			return ret;
 		}
 	}
-
-
 
 	var LEVELS_default = {
 		'log'      : 0x01,
@@ -387,10 +388,44 @@ var setup = function(options) {
 		instance.setGlobalOpts(obj);
 	};
 
+	var stdoutTag = getTagId("stdout");
+	var stderrTag = getTagId("stderr");
+
+
+
+	this.setProcessName = function(s) {
+		instance.addOriginLabel(PID,s);	
+	}
+
+	this.stdoutWriteOverride = function(s) {
+		if(s.length > 0) {	
+			instance.log(s.substr(0,s.length-1),levels.log,stdoutTag);			
+		}
+	}
+
+	this.stderrWriteOverride = function(s) {
+		if(s.length > 0) {	
+			instance.log(s.substr(0,s.length-1),levels.error,stderrTag);			
+		}
+	}
+
+	this.stdoutWriteOverridePID = function(s) {
+		if(s.length > 0) {	
+			instance.log(s.substr(0,s.length-1),levels.log,stdoutTag,PID);			
+		}
+	}
+
+	this.stderrWriteOverridePID = function(s) {
+		if(s.length > 0) {	
+			instance.log(s.substr(0,s.length-1),levels.error,stderrTag,PID);			
+		}
+	}
+
+
 
 	var Writable = require('stream').Writable;
 
-	function WritableConsole(opt) {
+	function WritableConsole(opt) {  // TODO add opt for 'origin' and 'tag'
   		Writable.call(this, opt);
  	    this.logger = self;
  	    if(opt.level) {
@@ -413,7 +448,52 @@ var setup = function(options) {
 	}
 
 	this.getNewWritableConsole = function(levl) {
-		return new WritableConsole({level:levl});
+//		return new WritableConsole({level:levl});
+//		
+		var s = new Writable({highWaterMark:0});
+		var _level = levl;
+		var cb;
+		var data;
+		var tries = 0;
+		var offset = 0;
+
+		s.write = function() {
+//			fs.write(1, data, offset, data.length - offset, null, onwrite);		
+			self._log(_level,data);
+			// return cb();			
+		};
+
+		// var onwrite = function(err, written) {
+		// 	if (err && err.code === 'EPIPE') return cb()
+		// 	if (err && err.code === 'EAGAIN' && tries++ < 30) return setTimeout(write, 10);
+		// 	if (err) return cb(err);
+
+		// 	tries = 0;
+		// 	if (offset + written >= data.length) return cb();
+
+		// 	offset += written;
+		// 	write();
+		// };
+
+		s._write = function(_data, enc, _cb) {
+			offset = 0;
+			cb = _cb;
+			data = _data;
+			write();
+		};
+
+		s._writev = null;
+
+		s._isStdio = true;
+		// s.isTTY = process.stdout.isTTY;
+		s.isTTY = false;
+		s.on('finish', function() {
+			// fs.close(1, function(err) {
+			// 	if (err) s.emit('error', err);
+			// });
+		});
+
+		return s;
 	}	
 
 }

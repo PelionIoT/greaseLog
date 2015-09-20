@@ -986,6 +986,12 @@ NAN_METHOD(GreaseLogger::ModifyDefaultTarget) {
 				v8::String::Utf8Value v8str(jsKey);
 				targ->setPostFormat(v8str.operator *(),v8str.length());
 			}
+			jsKey = jsObj->Get(Nan::New("pre_msg").ToLocalChecked());
+			if(jsKey->IsString()) {
+				Nan::Utf8String v8str(jsKey);
+				targ->setPreMsgFormat(v8str.operator *(),v8str.length());
+			}
+
 		}
 	}
 }
@@ -1058,6 +1064,8 @@ NAN_METHOD(GreaseLogger::AddFilter) {
 
 		logLabel *preFormat = NULL;
 		logLabel *postFormat = NULL;
+		logLabel *postFormatPreMsg = NULL;
+
 		Local<Value> jsKey = jsObj->Get(Nan::New("pre").ToLocalChecked());
 		if(jsKey->IsString()) {
 			v8::String::Utf8Value v8str(jsKey);
@@ -1068,8 +1076,13 @@ NAN_METHOD(GreaseLogger::AddFilter) {
 			v8::String::Utf8Value v8str(jsKey);
 			postFormat= logLabel::fromUTF8(v8str.operator *(),v8str.length());
 		}
+		jsKey = jsObj->Get(Nan::New("post_fmt_pre_msg").ToLocalChecked());
+		if(jsKey->IsString()) {
+			v8::String::Utf8Value v8str(jsKey);
+			postFormatPreMsg= logLabel::fromUTF8(v8str.operator *(),v8str.length());
+		}
 
-		if(l->_addFilter(targetId,originId,tagId,mask,id,preFormat,postFormat))
+		if(l->_addFilter(targetId,originId,tagId,mask,id,preFormat,postFormatPreMsg,postFormat))
 			ret = Nan::New((uint32_t) id);
 		else
 			ret = Nan::New(false);

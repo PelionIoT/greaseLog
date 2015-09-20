@@ -573,6 +573,7 @@ protected:
 		LevelMask levelMask;
 		TargetId targetId;
 		logLabel preFormat;
+		logLabel postFormatPreMsg;
 		logLabel postFormat;
 		Filter() : preFormat(), postFormat() {
 			id = 0;  // an ID of 0 means - empty Filter
@@ -580,7 +581,7 @@ protected:
 			targetId = 0;
 			_disabled = false;
 		};
-		Filter(FilterId id, LevelMask mask, TargetId t) : _disabled(false), id(id), levelMask(mask), targetId(t), preFormat(), postFormat() {}
+		Filter(FilterId id, LevelMask mask, TargetId t) : _disabled(false), id(id), levelMask(mask), targetId(t), preFormat(), postFormatPreMsg(), postFormat() {}
 //		Filter(Filter &&o) : id(o.id), levelMask(o.mask), targetId(o.t) {};
 		Filter(Filter &o) :  _disabled(false), id(o.id), levelMask(o.levelMask), targetId(o.targetId) {};
 		Filter& operator=(Filter& o) {
@@ -588,6 +589,7 @@ protected:
 			levelMask = o.levelMask;
 			targetId = o.targetId;
 			preFormat = o.preFormat;
+			postFormatPreMsg = o.postFormatPreMsg;
 			postFormat = o.postFormat;
 			return *this;
 		}
@@ -1609,7 +1611,7 @@ protected:
 			size_t space = remain;
 			logLabel *label;
 			int n = 0;
-			if(!filter->preFormat.empty()) {
+			if(filter && !filter->preFormat.empty()) {
 				n = snprintf(mem + (remain-space),space,filter->preFormat.buf.handle.base);
 				space = space - n;
 			}
@@ -1645,6 +1647,11 @@ protected:
 				n = snprintf(mem + (remain-space),space,preMsgFormat.buf.handle.base);
 				space = space - n;
 			}
+			if(filter && !filter->postFormatPreMsg.empty()) {
+				n = snprintf(mem + (remain-space),space,filter->postFormatPreMsg.buf.handle.base);
+				space = space - n;
+			}
+
 			// returns the amount of space used.
 			return remain-space;
 		}
@@ -1653,7 +1660,7 @@ protected:
 			size_t space = remain;
 			logLabel *label;
 			int n = 0;
-			if(!filter->postFormat.empty()) {
+			if(filter && !filter->postFormat.empty()) {
 				n = snprintf(mem,space,filter->postFormat.buf.handle.base);
 				space = space - n;
 			}
@@ -2760,7 +2767,7 @@ protected:
 	}
 
 	bool _addFilter(TargetId t, OriginId origin, TagId tag, LevelMask level, FilterId &id,
-			logLabel *preformat = nullptr, logLabel *postformat = nullptr) {
+			logLabel *preformat = nullptr, logLabel *postformatpremsg = nullptr, logLabel *postformat = nullptr) {
 		uint64_t hash = filterhash(tag,origin);
 		bool ret = false;
 		uv_mutex_lock(&nextIdMutex);
@@ -2777,8 +2784,11 @@ protected:
 		Filter f(id,level,t);
 		if(preformat && !preformat->empty())
 			f.preFormat = *preformat;
+		if(postformatpremsg && !postformatpremsg->empty())
+			f.postFormatPreMsg = *postformatpremsg;
 		if(postformat && !postformat->empty())
 			f.postFormat = *postformat;
+
 		DBG_OUT("new Filter(%x,%x,%x) to list [hash] %llu", id,level,t, hash);
 		// TODO add to list
 		ret = list->add(f);
