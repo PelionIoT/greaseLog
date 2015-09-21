@@ -21,15 +21,12 @@
     "url": "https://github.com/WigWagCo/greaseLog/issues"
   },
   "gypfile": true,
-  "scripts": {
-    "install": "node-gyp rebuild"
+  "dependencies": {
+    "nan": "^2.0.9"
   },
   "homepage": "https://github.com/WigWagCo/greaseLog",
   "directories": {
     "test": "test"
   },
-  "license": "MIT",
-  "dependencies": {
-    "nan": "^2.0.9"
-  }
+  "license": "MIT"
 }
