@@ -43,7 +43,8 @@
       "include_dirs": [
          "deps/twlib/include",
          "deps/build/include",
-	 "node_modules/nan"
+       	 "node_modules/nan",
+         "<!(node -e \"require('nan')\")"
       ],
       'link_settings': {
             'libraries': [
