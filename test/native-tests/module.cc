@@ -16,6 +16,8 @@
 #warning "*** Debug build."
 #endif
 
+#include "nan.h"
+
 #include "module_err.h"
 #include "grease_client.h"
 #include <stdio.h>
@@ -27,32 +29,26 @@
 using namespace v8;
 
 
-Persistent<Function> TestModule::constructor;
+Nan::Persistent<v8::Function> TestModule::constructor;
 
 
 
-Handle<Value> TestModule::Init(const Arguments& args) {
 
-	HandleScope scope;
-
-
-	return scope.Close(Undefined());
-
-}
 
 class workReq {
 public:
 	int number_of_logs;
 	uint32_t interval;
 	char *s;
-	v8::Persistent<Function> completeCB;
+	Nan::Callback *completeCB;
 	uv_work_t work;
 
-	workReq() : number_of_logs(0), interval(0), s(NULL), completeCB() {
+	workReq() : number_of_logs(0), interval(0), s(NULL), completeCB(NULL) {
 		work.data = this;
 	}
 	~workReq() {
 		if(s) ::free(s);
+		if(completeCB) delete completeCB;
 	}
 };
 
@@ -64,27 +60,22 @@ public:
  * @param args
  * @return
  **/
-Handle<Value> TestModule::New(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(TestModule::New){
 
 	TestModule* obj = NULL;
 
-	if (args.IsConstructCall()) {
+	if (info.IsConstructCall()) {
 	    // Invoked as constructor: `new MyObject(...)`
-//	    double value = args[0]->IsUndefined() ? 0 : args[0]->NumberValue();
-//		if(!args[0]->IsString()) {
-//			return ThrowException(Exception::TypeError(String::New("Improper first arg to ProcFs cstor. Must be a string.")));
-//		}
-
 		obj = new TestModule();
 
-		obj->Wrap(args.This());
-	    return args.This();
+		obj->Wrap(info.This());
+		info.GetReturnValue().Set(info.This());
 	} else {
 	    // Invoked as plain function `MyObject(...)`, turn into construct call.
-	    const int argc = 1;
-	    Local<Value> argv[argc] = { args[0] };
-	    return scope.Close(constructor->NewInstance(argc, argv));
+//	    const int argc = 1;
+//	    Local<Value> argv[argc] = { info[0] };
+	    v8::Local<v8::Function> cons = Nan::New<v8::Function>(TestModule::constructor);
+	    info.GetReturnValue().Set(cons->NewInstance(0, 0));
 	  }
 
 }
@@ -96,13 +87,12 @@ Handle<Value> TestModule::New(const Arguments& args) {
  * @param
  * doSomeLoggin(msg,intervalms,num,completecb)
  */
-Handle<Value> TestModule::DoSomeLoggin(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(TestModule::DoSomeLoggin) {
 	int cb_index = 1;
-	if(args.Length() > 3 && args[0]->IsString() && args[3]->IsFunction()) {
+	if(info.Length() > 3 && info[0]->IsString() && info[3]->IsFunction()) {
 
 		workReq *req = new workReq();
-		v8::String::Utf8Value v8str(args[0]);
+		v8::String::Utf8Value v8str(info[0]);
 
 		int len = v8str.length();
 		if(len > 0) {
@@ -110,9 +100,9 @@ Handle<Value> TestModule::DoSomeLoggin(const Arguments& args) {
 			memcpy(req->s,v8str.operator *(),len);
 		}
 
-		req->interval = args[1]->Uint32Value();
-		req->number_of_logs = (int) args[2]->Int32Value();
-		req->completeCB = Persistent<Function>::New(Local<Function>::Cast(args[3]));
+		req->interval = info[1]->Uint32Value();
+		req->number_of_logs = (int) info[2]->Int32Value();
+		req->completeCB = new Nan::Callback(Local<Function>::Cast(info[3]));
 
 //		if(req->ref) {
 //			uv_timer_init(uv_default_loop(),&req->timeoutHandle);
@@ -123,10 +113,8 @@ Handle<Value> TestModule::DoSomeLoggin(const Arguments& args) {
 
 		DBG_OUT("Queuing work for doSomeLoggin\n");
 		uv_queue_work(uv_default_loop(), &(req->work), TestModule::do_somelogging, TestModule::post_work);
-
-		return scope.Close(Undefined());
 	} else {
-		return ThrowException(Exception::TypeError(String::New("doSomeLoggin(msg,intervalms,num,completecb)")));
+		Nan::ThrowTypeError("doSomeLoggin(msg,intervalms,num,completecb)");
 	}
 }
 
@@ -147,14 +135,6 @@ void TestModule::do_somelogging(uv_work_t *req) {
 	}
 
 
-
-
-
-
-
-
-
-
 }
 
 void TestModule::post_work(uv_work_t *req, int status) {
@@ -163,10 +143,9 @@ void TestModule::post_work(uv_work_t *req, int status) {
 	Local<Value> argv[argc];
 	TestModule *hiddenobj = NULL;
 
-	if(!job->completeCB->IsUndefined()) {
-		job->completeCB->Call(Context::GetCurrent()->Global(),0,argv);
+	if(job->completeCB) {
+		job->completeCB->Call(0,0);
 	}
-
 
 
 	delete job; // should delete Persistent Handles and allow the Buffer object to be GC'ed
@@ -179,14 +158,20 @@ void TestModule::post_work(uv_work_t *req, int status) {
 
 void InitAll(Handle<Object> exports, Handle<Object> module) {
 	INIT_GLOG;  // initialize logger (you should also call this in every new thread at least once)
+	Local<FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(TestModule::New);
+	tpl->SetClassName(Nan::New("testModule").ToLocalChecked());
+	tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
-	exports->Set(String::NewSymbol("testModule"), FunctionTemplate::New(TestModule::New)->GetFunction());
-	exports->Set(String::NewSymbol("doSomeLoggin"), FunctionTemplate::New(TestModule::DoSomeLoggin)->GetFunction());
+	tpl->PrototypeTemplate()->SetInternalFieldCount(2);
+	Nan::SetPrototypeMethod(tpl,"doSomeLoggin",TestModule::DoSomeLoggin);
+	TestModule::constructor.Reset(tpl->GetFunction());
 
-	Handle<Object> consts = Object::New();
-	_errcmn::DefineConstants(consts);
-	exports->Set(String::NewSymbol("CONSTS"), consts);
-
+//	Nan::Set(exports,Nan::New<String>("testModule"), FunctionTemplate::New(TestModule::New)->GetFunction());
+	exports->Set(Nan::New("testModule").ToLocalChecked(), tpl->GetFunction());
+//	Nan::Set(exports,Nan::New<String>("doSomeLoggin"), FunctionTemplate::New(TestModule::DoSomeLoggin)->GetFunction());
+	Handle<Object> errconsts = Nan::New<Object>();
+	_errcmn::DefineConstants(errconsts);
+	Nan::Set(exports,Nan::New<String>("ERR").ToLocalChecked(), errconsts);
 
 
 }

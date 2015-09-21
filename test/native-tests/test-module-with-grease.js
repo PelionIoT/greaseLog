@@ -75,8 +75,9 @@ try {
 		console.error("Error in loading test module [debug]: " + e + " --> " + e.stack);
 }
 
+var tester = testmodule.testModule();
 
-testmodule.doSomeLoggin("Hello",100,10,function(){
+tester.doSomeLoggin("Hello",100,10,function(){
 	console.log("native test over");
 });
 

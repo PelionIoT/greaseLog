@@ -39,7 +39,7 @@ logger.setProcessName('testprog');
 
 logger.modifyDefaultTarget({
 	format: {
-    	time: "[%ld:%d] ",
+    	time: "[%ld:%03d] ",
     	level: "%-10s ", // left align
     	tag: "\x1B[33m%-10s\x1B[39m ",
     	origin: "\x1B[37m\x1B[100m%-10s\x1B[39m\x1B[49m ",
@@ -170,7 +170,7 @@ var testCallback = function(str,id) {
 
 setTimeout(function(){
 	console.log("DONE.");
-},3000);
+},30000);
 
 
 

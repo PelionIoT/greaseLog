@@ -29,9 +29,11 @@ extern "C" {
 #define __DEFAULT_LOG_META_PRIVATE ._cached_hash = { UINT64_C(0xFFFFFFFFFFFFFFFF), 0, 0 }, \
 		._cached_lists = { NULL, NULL, NULL, NULL }
 
+uint32_t __grease_default_tag = GLOG_DEFAULT_TAG;
+
 //static uint32_t grease_PREAMBLE = SINK_LOG_PREAMBLE;
 const logMeta __noMetaData = {
-		.tag = 0,
+		.tag = GLOG_DEFAULT_TAG,
 		.level = 0,
 		.origin = 0,
 		.target = 0,
@@ -39,7 +41,7 @@ const logMeta __noMetaData = {
 		__DEFAULT_LOG_META_PRIVATE };
 
 const logMeta __meta_logdefault = {
-		.tag = 0,
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_LOG,
 		.origin = 0,
 		.target = 0,
@@ -47,7 +49,7 @@ const logMeta __meta_logdefault = {
 		__DEFAULT_LOG_META_PRIVATE };
 
 const logMeta __meta_info = {
-		.tag = 0,
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_INFO,
 		.origin = 0,
 		.target = 0,
@@ -56,7 +58,7 @@ const logMeta __meta_info = {
 
 
 const logMeta __meta_error = {
-		.tag = 0,
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_ERROR,
 		.origin = 0,
 		.target = 0,
@@ -65,7 +67,7 @@ const logMeta __meta_error = {
 
 
 const logMeta __meta_warn = {
-		.tag = 0,
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_WARN,
 		.origin = 0,
 		.target = 0,
@@ -74,7 +76,7 @@ const logMeta __meta_warn = {
 
 
 const logMeta __meta_debug = {
-		.tag = 0,
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_DEBUG,
 		.origin = 0,
 		.target = 0,
@@ -83,7 +85,7 @@ const logMeta __meta_debug = {
 
 
 const logMeta __meta_debug2 = {
-		.tag = 0,
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_DEBUG2,
 		.origin = 0,
 		.target = 0,
@@ -92,7 +94,7 @@ const logMeta __meta_debug2 = {
 
 
 const logMeta __meta_debug3 = {
-		.tag = 0,
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_DEBUG3,
 		.origin = 0,
 		.target = 0,
@@ -101,7 +103,7 @@ const logMeta __meta_debug3 = {
 
 
 const logMeta __meta_user1 = {
-		.tag = 0,
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_USER1,
 		.origin = 0,
 		.target = 0,
@@ -110,7 +112,7 @@ const logMeta __meta_user1 = {
 
 
 const logMeta __meta_user2 = {
-		.tag = 0,
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_USER2,
 		.origin = 0,
 		.target = 0,
@@ -118,7 +120,7 @@ const logMeta __meta_user2 = {
 		__DEFAULT_LOG_META_PRIVATE };
 
 const logMeta __meta_success = {
-		.tag = 0,
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_SUCCESS,
 		.origin = 0,
 		.target = 0,
@@ -126,7 +128,7 @@ const logMeta __meta_success = {
 		__DEFAULT_LOG_META_PRIVATE };
 
 const logMeta __meta_trace = {
-		.tag = 0,
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_TRACE,
 		.origin = 0,
 		.target = 0,

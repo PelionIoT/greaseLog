@@ -214,7 +214,7 @@ void GreaseLoggerClient::Init(v8::Local<v8::Object> exports) {
 
 
 	GreaseLoggerClient::constructor.Reset(tpl->GetFunction());
-	exports->Set(Nan::New<String>("ClientLogger").ToLocalChecked(), tpl->GetFunction());
+	exports->Set(Nan::New<String>("Client").ToLocalChecked(), tpl->GetFunction());
 }
 
 

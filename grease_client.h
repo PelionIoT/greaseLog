@@ -80,9 +80,9 @@ typedef uint32_t RawLogLen;    // len of a raw log buffer into a sink
 
 
 typedef struct logMeta_t {   // meta data for each log entry
-	int32_t tag;    // 0 means no tag
+	uint32_t tag;    // 0 means no tag
 	uint32_t level;  // 0 means no level
-	int32_t origin; // 0 means no origin
+	uint32_t origin; // 0 means no origin
 	uint32_t target; // 0 means default target
 	uint32_t extras; // if not zero, then the meta is wrapped by an extras container (extra_logMeta)
 	// internal
@@ -137,6 +137,7 @@ extern const uint32_t __grease_preamble;
 extern const uint32_t __grease_sink_ping;
 extern const uint32_t __grease_sink_ping_ack;
 
+extern uint32_t __grease_default_tag;
 
 extern const logMeta __meta_logdefault;
 extern const logMeta __meta_info;
@@ -174,11 +175,20 @@ extern const logMeta __meta_trace;
 #define GLOG_USER1(s,...) grease_printf(&__meta_user1, s, ##__VA_ARGS__ )
 #define GLOG_USER2(s,...) grease_printf(&__meta_user2, s, ##__VA_ARGS__ )
 
+#include "grease_common_tags.h"
+
+#ifndef GLOG_DEFAULT_TAG
+#define GLOG_DEFAULT_TAG GREASE_TAG_NATIVE
+#endif
+
 #define INIT_GLOG do { \
   int r = grease_initLogger(); \
+  __grease_default_tag = GLOG_DEFAULT_TAG; \
   if(r != GREASE_OK) \
 	  fprintf(stderr,"****** Failed to init grease logger (%d) ******\n",r); } while(0)
 #define SHUTDOWN_GLOG grease_shutdown()
+
+
 
 extern int grease_printf(const logMeta *m, const char *format, ... );
 extern int _grease_logToRaw(const logMeta *f, const char *s, RawLogLen len, char *tobuf, RawLogLen *buflen);

@@ -120,11 +120,12 @@
       'configurations': {
         'Debug': {
           "ldflags" : ["-ldl"],
-          "cflags" : ["-ldl"]
+          "cflags" : ["-ldl","-DGLOG_DEFAULT_TAG=GREASE_TAG_ECHO"]
         },
         'Release': {
           "ldflags" : ["-ldl"],
-          "cflags" : ["-ldl"]        }
+          "cflags" : ["-ldl","-DGLOG_DEFAULT_TAG=GREASE_TAG_ECHO"]        
+          }
       }
       }  ] ]
 

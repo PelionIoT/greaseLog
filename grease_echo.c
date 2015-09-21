@@ -14,6 +14,8 @@
 #include <stdlib.h>
 
 //#define GREASE_DEBUG_MODE 1
+#include "grease_common_tags.h"
+#define GLOG_DEFAULT_TAG GREASE_TAG_ECHO
 #include "grease_client.h"
 
 #define ERROR_OUT(s,...) fprintf(stderr, "**ERROR** " s, ##__VA_ARGS__ )//#define ERROR_PERROR(s,...) fprintf(stderr, "*****ERROR***** " s, ##__VA_ARGS__ );

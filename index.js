@@ -8,8 +8,7 @@ var util = require('util');
 var build_opts = { 
 	debug: 1 
 };
-var colors = require('./colors.js');
-//var _console_log = console.log;
+
 var _console_log = function() {}
 
 var nativelib = null;
@@ -17,6 +16,7 @@ var nativelib = null;
 
 var _logger = {};
 
+var MAX_TAG_ORIGIN_VALUE = 0xFF00; // 'special' value above this
 
 var instance = null;
 var setup = function(options) {
@@ -24,6 +24,7 @@ var setup = function(options) {
 
 	var PID = process.pid + 3000; // to avoid calling an Accessor constantly, if that's what this does. 
 		                          // we add 3000 so that we don't easily step on this when making origin labels
+	var client_only = false;
 
 	var TAGS = {};
 	var tagId = 1;
@@ -31,27 +32,47 @@ var setup = function(options) {
 	var ORIGINS = {};
 	var originId = 1;
 
-	var getTagId = function(o) {
+	var getTagId = function(o,val) {
 		var ret = TAGS[o];
 		if(ret)
 			return ret;
 		else {
-			ret = tagId++;
-			TAGS[o] = ret;
-			instance.addTagLabel(ret,o);
-			return ret;
+			if(val != undefined) {
+				TAGS[o] = val;
+				if(!client_only)
+					instance.addTagLabel(val,o);				
+				return val;
+			} else {
+				if(tagId >= MAX_TAG_ORIGIN_VALUE) 
+					tagId = 1;
+				ret = tagId++;
+				TAGS[o] = ret;
+				if(!client_only)
+					instance.addTagLabel(ret,o);
+				return ret;
+			}
 		}
 	}
 
-	var getOriginId = function(o) {
+	var getOriginId = function(o,val) {
 		var ret = ORIGINS[o];
 		if(ret)
 			return ret;
 		else {
-			ret = originId++;
-			ORIGINS[o] = ret;
-			instance.addOriginLabel(ret,o);	
-			return ret;
+			if(val != undefined) {
+				ORIGINS[o] = val;
+				if(!client_only)
+					instance.addOriginLabel(val,o);				
+				return val;
+			} else {
+				if(originId >= MAX_TAG_ORIGIN_VALUE) 
+					originId = 1;
+				ret = originId++;
+				ORIGINS[o] = ret;
+				if(!client_only)
+					instance.addOriginLabel(ret,o);	
+				return ret;
+			}
 		}
 	}
 
@@ -71,7 +92,6 @@ var setup = function(options) {
 	var do_trace = true;
 	var levels = LEVELS_default;
 	var default_sink = {unixDgram:"/tmp/grease.socket"};
-	var client_only = false;
 	if(options) {
 //		console.dir(options);
 		if(options.levels) levels = options.levels;
@@ -289,6 +309,7 @@ var setup = function(options) {
 			}
 		});
 	} else if(!instance && client_only) {
+		console.dir(nativelib);
 		instance = new nativelib.Client();
 		_console_log("START!!!!!!!!!!! CLIENT");
 		instance.start();
@@ -367,20 +388,17 @@ var setup = function(options) {
 		this.disableTarget = function() {
 			return instance.disableTarget.apply(instance,arguments);
 		}
+
+
+		// setup well-known Tag names. 
+		// See: grease_common_tags.h
+		getTagId("echo",0xFFF01);
+		getTagId("console",0xFFF02);
+		getTagId("native",0xFFF03);
+
+
+
 	}
-
-
-	// this.addTagLabel = function(l){
-	// 	var n =	getTagId(l);
-	// 	instance.addTagLabel(n,l);
-	// }
-
-	// this.addTagLabel = function(l){
-	// 	var n =	getTagId(l);
-	// 	instance.addTagLabel(n,l);
-	// }
-
-
 
 	this.setGlobalOpts = function(obj) {
 		if(obj.levelFilterOutMask)
