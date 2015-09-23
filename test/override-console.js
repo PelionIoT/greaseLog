@@ -105,9 +105,14 @@ var testCallback = function(str,id) {
 		util.log("CB (" + id + ")>" + entries[n] + "<"); // DO NOTE: you need to use util.log here, otherwise it will be recursive test ;)
 }
 
-var child = cp.fork(__dirname + "/native-tests/test-module-as-sink-client.js");
+setTimeout(function(){
+	// given enough time for Sink to setup...
+	var child = cp.fork(__dirname + "/native-tests/test-module-as-sink-client.js");
+	var child_pid = logger.makeOriginIdFromPid(child.pid);
+	console.log("child_pid = " + child_pid);
+	logger.addOriginLabel(child_pid,"childtest");
 
-logger.addOriginLabel(child.pid,"childtest");
+},1000);
 
 
 

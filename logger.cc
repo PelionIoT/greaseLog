@@ -1781,7 +1781,7 @@ NAN_METHOD(GreaseLogger::New) {
 extern "C" {
 #endif
 
-int grease_logLocal(const logMeta *f, const char *s, RawLogLen len) {
+int grease_logLocal(logMeta *f, const char *s, RawLogLen len) {
 	GreaseLogger *l = GreaseLogger::setupClass();
 	return l->log(*f,s,len);
 }

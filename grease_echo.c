@@ -15,6 +15,7 @@
 
 //#define GREASE_DEBUG_MODE 1
 #include "grease_common_tags.h"
+#define GREASE_NO_DEFAULT_NATIVE_ORIGIN 1    // we dont need to specify an origin with this client
 #define GLOG_DEFAULT_TAG GREASE_TAG_ECHO
 #include "grease_client.h"
 

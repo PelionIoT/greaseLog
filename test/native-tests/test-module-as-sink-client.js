@@ -44,7 +44,7 @@ try {
 
 var tester = testmodule.testModule();
 
-tester.doSomeLoggin("Hello",100,10,function(){
+tester.doSomeLoggin("NativeHello",100,10,function(){
 	console.log("native test over");
 });
 

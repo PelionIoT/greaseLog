@@ -104,7 +104,6 @@ typedef struct extra_logMeta_t {
 #define META_IGNORE_LIST(s) grease_container_of(&s,struct extra_logMeta_t,m)->ignore_list
 #define META_WITH_EXTRAS(s) grease_container_of(&s,struct extra_logMeta_t,m)
 
-extern const logMeta __noMetaData;
 
 //#define ZERO_LOGMETA(m) do { m.tag = 0; m.level = 0; m.origin = 0; m.target = 0; m._cached_hash = 0; m._cached_lists = { NULL, NULL, NULL } } while(0)
 #define ZERO_LOGMETA(m) do { m = __noMetaData; } while(0)
@@ -132,24 +131,31 @@ extern const logMeta __noMetaData;
 
 extern int (*grease_log)(const logMeta *f, const char *s, RawLogLen len);
 
-extern const logMeta __noMetaData;
+#ifndef GREASE_NO_DEFAULT_NATIVE_ORIGIN
+#define GREASE_META_ISCONST
+#else
+#define GREASE_META_ISCONST const
+#endif
+
+
+extern GREASE_META_ISCONST logMeta __noMetaData;
 extern const uint32_t __grease_preamble;
 extern const uint32_t __grease_sink_ping;
 extern const uint32_t __grease_sink_ping_ack;
 
 extern uint32_t __grease_default_tag;
 
-extern const logMeta __meta_logdefault;
-extern const logMeta __meta_info;
-extern const logMeta __meta_error;
-extern const logMeta __meta_warn;
-extern const logMeta __meta_debug;
-extern const logMeta __meta_debug2;
-extern const logMeta __meta_debug3;
-extern const logMeta __meta_user1;
-extern const logMeta __meta_user2;
-extern const logMeta __meta_success;
-extern const logMeta __meta_trace;
+extern GREASE_META_ISCONST logMeta __meta_logdefault;
+extern GREASE_META_ISCONST logMeta __meta_info;
+extern GREASE_META_ISCONST logMeta __meta_error;
+extern GREASE_META_ISCONST logMeta __meta_warn;
+extern GREASE_META_ISCONST logMeta __meta_debug;
+extern GREASE_META_ISCONST logMeta __meta_debug2;
+extern GREASE_META_ISCONST logMeta __meta_debug3;
+extern GREASE_META_ISCONST logMeta __meta_user1;
+extern GREASE_META_ISCONST logMeta __meta_user2;
+extern GREASE_META_ISCONST logMeta __meta_success;
+extern GREASE_META_ISCONST logMeta __meta_trace;
 
 #define GREASE_C_MACRO_MAX_MESSAGE 250
 
@@ -160,7 +166,6 @@ extern const logMeta __meta_trace;
 #define GREASE_VIA_SINK 3
 #define GREASE_VIA_LOCAL 1
 #define GREASE_NO_CONNECTION 0
-
 
 
 #define GLOG(s,...) grease_printf(&__meta_logdefault, s, ##__VA_ARGS__ )
@@ -181,6 +186,9 @@ extern const logMeta __meta_trace;
 #define GLOG_DEFAULT_TAG GREASE_TAG_NATIVE
 #endif
 
+extern OriginId _grease_get_default_origin(void);
+
+
 #define INIT_GLOG do { \
   int r = grease_initLogger(); \
   __grease_default_tag = GLOG_DEFAULT_TAG; \
@@ -190,8 +198,8 @@ extern const logMeta __meta_trace;
 
 
 
-extern int grease_printf(const logMeta *m, const char *format, ... );
-extern int _grease_logToRaw(const logMeta *f, const char *s, RawLogLen len, char *tobuf, RawLogLen *buflen);
+extern int grease_printf(logMeta *m, const char *format, ... );
+extern int _grease_logToRaw(logMeta *f, const char *s, RawLogLen len, char *tobuf, RawLogLen *buflen);
 
 /**
  * create a log entry for use across the network to Grease
@@ -204,7 +212,7 @@ extern int _grease_logToRaw(const logMeta *f, const char *s, RawLogLen len, char
  * @return returns GREASE_OK if successful, or GREASE_NO_BUFFER if the buffer is too small. If parameters are
  * invalid returns GREASE_INVALID_PARAMS
  */
-extern int grease_logToSink(const logMeta *f, const char *s, RawLogLen len);
+extern int grease_logToSink(logMeta *f, const char *s, RawLogLen len);
 
 /**
  * sets up the logger if using a local (in process) Grease server
@@ -232,7 +240,7 @@ extern void grease_shutdown(void);
  * @param tobuf
  * @param len
  */
-extern int grease_logLocal(const logMeta *f, const char *s, RawLogLen len);
+extern int grease_logLocal(logMeta *f, const char *s, RawLogLen len);
 
 /**
  * Returns a value showing how the client is connected.

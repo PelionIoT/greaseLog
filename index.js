@@ -22,8 +22,13 @@ var instance = null;
 var setup = function(options) {
 //	console.log("SETUP!!!!!!!!!!");
 
-	var PID = process.pid + 3000; // to avoid calling an Accessor constantly, if that's what this does. 
-		                          // we add 3000 so that we don't easily step on this when making origin labels
+	this.makeOriginIdFromPid = function(pid) {
+		return ((pid & 0xFFFFFFFF) | 0x15000000); // add value to avoid stepping on origin IDs which might be statically setup
+	}
+
+	var PID = this.makeOriginIdFromPid(process.pid); // to avoid calling an Accessor constantly, if that's what this does. 
+	console.log("my pid = " + PID);										      
+
 	var client_only = false;
 
 	var TAGS = {};
@@ -101,7 +106,7 @@ var setup = function(options) {
 		if(options.do_trace !== undefined) do_trace = options.do_trace;
 		if(options.default_sink !== undefined) { default_sink = options.default_sink; }
 		if(options.client_only) { client_only = true; }
-		if(options.client_no_origin_as_pid !== undefined) client_no_origin_as_pid = options.client_no_origin_as_pid;
+		if(options.default_origin !== undefined) default_originN = options.default_origin;
 	}
 
 	if(!client_only) {
@@ -122,9 +127,8 @@ var setup = function(options) {
 			else
 				console.error("Error in nativelib (client) [debug]: " + e + " --> " + e.stack);
 		}	
-		if(!client_no_origin_as_pid) {
-			default_originN = process.pid;
-		}		
+		if(default_originN === undefined)
+			default_originN = PID;
 	}
 
 	var natives = Object.keys(nativelib);
@@ -302,8 +306,6 @@ var setup = function(options) {
 			
 			if(default_sink)
 				instance.addSink(default_sink);
-
-			
 
 			for(var n=0;n<levelsK.length;n++) {
 				var N = levels[levelsK[n]];
