@@ -1,6 +1,7 @@
 // basic test of logging.
 var util = require('util');
 var logger = require('../index.js')();
+var cp = require('child_process');
 
 //console.dir(logger);
 
@@ -42,7 +43,7 @@ logger.modifyDefaultTarget({
     	time: "[%ld:%03d] ",
     	level: "%-10s ", // left align
     	tag: "\x1B[33m%-10s\x1B[39m ",
-    	origin: "\x1B[37m\x1B[100m%-10s\x1B[39m\x1B[49m ",
+    	origin: "\x1B[37m\x1B[100m%-10s\x1B[39m\x1B[49m "
 	}
 });	
 // process.stderr.write = function(string,encoding,fd) {
@@ -104,6 +105,9 @@ var testCallback = function(str,id) {
 		util.log("CB (" + id + ")>" + entries[n] + "<"); // DO NOTE: you need to use util.log here, otherwise it will be recursive test ;)
 }
 
+var child = cp.fork(__dirname + "/native-tests/test-module-as-sink-client.js");
+
+logger.addOriginLabel(child.pid,"childtest");
 
 
 

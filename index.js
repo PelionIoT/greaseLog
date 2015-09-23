@@ -92,14 +92,16 @@ var setup = function(options) {
 	var do_trace = true;
 	var levels = LEVELS_default;
 	var default_sink = {unixDgram:"/tmp/grease.socket"};
+	var client_no_origin_as_pid = false;
+	var default_originN = undefined;
+
 	if(options) {
 //		console.dir(options);
 		if(options.levels) levels = options.levels;
 		if(options.do_trace !== undefined) do_trace = options.do_trace;
-		if(options.default_sink !== undefined) {
-			default_sink = options.default_sink;
-		}
+		if(options.default_sink !== undefined) { default_sink = options.default_sink; }
 		if(options.client_only) { client_only = true; }
+		if(options.client_no_origin_as_pid !== undefined) client_no_origin_as_pid = options.client_no_origin_as_pid;
 	}
 
 	if(!client_only) {
@@ -119,7 +121,10 @@ var setup = function(options) {
 				nativelib = require('./build/Debug/greaseLogClient.node');
 			else
 				console.error("Error in nativelib (client) [debug]: " + e + " --> " + e.stack);
-		}			
+		}	
+		if(!client_no_origin_as_pid) {
+			default_originN = process.pid;
+		}		
 	}
 
 	var natives = Object.keys(nativelib);
@@ -331,15 +336,30 @@ var setup = function(options) {
 	 * @param {string*} origin 
 	 * @return {[type]} [description]
 	 */
-	this._log = function(level,message,tag,origin,extras) {
-		var	originN = undefined;
-		if(origin)
-			originN = getOriginId(origin);
-		var tagN = undefined;
-		if(tag)
-			tagN = getTagId(tag);
-//		console.log(""+message+","+level + ","+tagN+","+originN);
-		instance.log(message,level,tagN,originN,extras);
+	if(client_only && !client_no_origin_as_pid) {
+		this._log = function(level,message,tag,origin,extras) {
+			var	originN = default_originN;
+			if(origin)
+				originN = getOriginId(origin);
+			var tagN = undefined;
+			if(tag)
+				tagN = getTagId(tag);
+	//		console.log(""+message+","+level + ","+tagN+","+originN);
+			instance.log(message,level,tagN,originN,extras);
+
+		}		
+	} else {
+		this._log = function(level,message,tag,origin,extras) {
+			var	originN = undefined;
+			if(origin)
+				originN = getOriginId(origin);
+			var tagN = undefined;
+			if(tag)
+				tagN = getTagId(tag);
+	//		console.log(""+message+","+level + ","+tagN+","+originN);
+			instance.log(message,level,tagN,originN,extras);
+
+		}
 	}
 
 	if(!client_only) {
