@@ -27,7 +27,7 @@ var setup = function(options) {
 	}
 
 	var PID = this.makeOriginIdFromPid(process.pid); // to avoid calling an Accessor constantly, if that's what this does. 
-	console.log("my pid = " + PID);										      
+//	console.log("my pid = " + PID);										      
 
 	var client_only = false;
 
@@ -316,7 +316,7 @@ var setup = function(options) {
 			}
 		});
 	} else if(!instance && client_only) {
-		console.dir(nativelib);
+//		console.dir(nativelib);
 		instance = new nativelib.Client();
 		_console_log("START!!!!!!!!!!! CLIENT");
 		instance.start();
