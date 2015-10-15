@@ -22,7 +22,7 @@
   },
   "gypfile": true,
   "dependencies": {
-    "nan": "^2.0.9"
+    "nan": "^2.1.0"
   },
   "homepage": "https://github.com/WigWagCo/greaseLog",
   "directories": {
