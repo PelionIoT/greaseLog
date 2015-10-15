@@ -682,6 +682,7 @@ void GreaseLogger::callV8LogCallbacks(uv_async_t *h) {
 void GreaseLogger::_doV8Callback(GreaseLogger::logTarget::writeCBData &data) {
 	const unsigned argc = 2;
 	Local<Value> argv[argc];
+	Nan::HandleScope scope;
 	if(data.b) {
 		Nan::MaybeLocal<String> s = Nan::New( data.b->handle.base, (int) data.b->handle.len );
 		Local<String> sconv;
@@ -718,6 +719,7 @@ void GreaseLogger::_doV8Callback(GreaseLogger::logTarget::writeCBData &data) {
 void GreaseLogger::callTargetCallback(uv_async_t *h) {
 	target_start_info *info = NULL;
 	GreaseLogger *l = GreaseLogger::setupClass();
+	Nan::HandleScope scope;
 	while(l->targetCallbackQueue.remove(info)) {
 		HEAVY_DBG_OUT("********* REMOVE targetCallbackQueue: %p\n", info);
 		const unsigned argc = 2;
