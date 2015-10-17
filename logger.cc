@@ -345,7 +345,7 @@ void GreaseLogger::handleInternalCmd(uv_async_t *handle, int status /*UNUSED*/) 
 			break;
     	case INTERNAL_SHUTDOWN:
     	{
-
+    		DBG_OUT("Got INTERNAL_SHUTDOWN");
     		// disable timer
     		uv_timer_stop(&LOGGER->flushTimer);
     		// disable all queues
@@ -398,14 +398,19 @@ void GreaseLogger::flushTimer_cb(uv_timer_t* handle, int status) {
 	flushAll();
 }
 
+void GreaseLogger::startFlushTimer() {
+	uv_timer_start(&flushTimer, LOGGER->flushTimer_cb, 2000, 500);
+}
 
+void GreaseLogger::stopFlushTimer() {
+	uv_timer_stop(&flushTimer);
+}
 
 void GreaseLogger::mainThread(void *p) {
 	GreaseLogger *SELF = (GreaseLogger *) p;
-
 	uv_timer_init(SELF->loggerLoop, &SELF->flushTimer);
 	uv_unref((uv_handle_t *)&LOGGER->flushTimer);
-	uv_timer_start(&SELF->flushTimer, flushTimer_cb, 2000, 500);
+//	uv_timer_start(&SELF->flushTimer, flushTimer_cb, 2000, 500);
 	uv_async_init(SELF->loggerLoop, &SELF->asyncInternalCommand, handleInternalCmd);
 	uv_async_init(SELF->loggerLoop, &SELF->asyncExternalCommand, handleExternalCmd);
 
@@ -676,6 +681,7 @@ void GreaseLogger::callV8LogCallbacks(uv_async_t *h) {
 		if(data.t->logCallback) {
 			_doV8Callback(data);
 		}
+		l->unrefFromV8_inV8();
 	}
 }
 
@@ -997,6 +1003,45 @@ NAN_METHOD(GreaseLogger::ModifyDefaultTarget) {
 		}
 	}
 }
+
+
+/**
+ * Allows caller to disable logging on a tag / origin / level combination
+ */
+NAN_METHOD(GreaseLogger::FilterOut) {
+
+}
+
+/**
+ * Allows caller to enable logging on a tag / origin / level combination. (The default)
+ */
+NAN_METHOD(GreaseLogger::FilterIn) {
+	bool ok = false;
+	if(info.Length() > 0 && info[0]->IsObject()) {
+		Local<Object> jsObj = info[0]->ToObject();
+
+		Local<Value> jsTag = jsObj->Get(Nan::New("tag").ToLocalChecked());
+		Local<Value> jsOrigin = jsObj->Get(Nan::New("origin").ToLocalChecked());
+
+		TagId tagId = 0;
+		OriginId originId = 0;
+
+		if(jsTag->IsUint32()) {
+			tagId = (TagId) jsTag->Uint32Value();
+			ok = true;
+		}
+
+		if(jsOrigin->IsUint32()) {
+			originId = (OriginId) jsOrigin->Uint32Value();
+			ok = true;
+		}
+
+
+
+	}
+}
+
+
 
 /**
  * addFilter(obj) where

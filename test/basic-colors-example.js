@@ -74,9 +74,9 @@ logger.createPTS(function(err,pty){
 
 logger.addTarget({
 	    tty: fd,
-	    callback: testCallback,
-	    delim: '\n', // separate each entry with a hard return
-	    format: {
+//	    callback: testCallback,
+	    delim: '\n' // separate each entry with a hard return
+	    ,format: {
 //	    	pre: 'targ-pre>', // pre: "pre>"   // 'bold' escape sequence
 	    	time: "[%ld:%d] ",
 	    	level: "<%s> ",
@@ -125,7 +125,7 @@ logger.addTarget({
 		logger.debug("************ FIRST **********");
 		var I = setInterval(function(){
 			for(var n=0;n<10;n++) {
-				logger.debug('example_tag','example_origin',"....debug me ["+N+"]....");
+				logger.debug_ex({tag:'example_tag',origin:'example_origin'},"....debug me ["+N+"]....");
 				logger.warn("....warn me ["+N+"]....");	
 				logger.log("....log me ["+N+"]....");					
 				logger.error("....error me ["+N+"]....");	
@@ -137,7 +137,7 @@ logger.addTarget({
 				logger.debug("************ LAST **********");	
 //				setTimeout(function(){},2000);
 			}
-		},500);
+		},100);
 
 
 	});

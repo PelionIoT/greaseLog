@@ -181,7 +181,7 @@ struct uint64_t_eqstrP {
 #ifdef LOGGER_HEAVY_DEBUG
 #pragma message "Build is Debug Heavy!!"
 // confused? here: https://gcc.gnu.org/onlinedocs/cpp/Variadic-Macros.html
-#define HEAVY_DBG_OUT(s,...) fprintf(stderr, "**DEBUG** " s "\n", ##__VA_ARGS__ )
+#define HEAVY_DBG_OUT(s,...) fprintf(stderr, "**DEBUG2** " s "\n", ##__VA_ARGS__ )
 #define IF_HEAVY_DBG( x ) { x }
 #else
 #define HEAVY_DBG_OUT(s,...) {}
@@ -533,7 +533,97 @@ protected:
 
 	uv_thread_t logThreadId;
 	uv_async_t asyncV8LogCallback;  // used to wakeup v8 to call log callbacks (see v8LogCallbacks)
-	uv_async_t asyncTargetCallback;
+	uv_async_t asyncTargetCallback; // used to wakeup v8 to call callbacks on target starts
+
+	uv_async_t asyncRefLogger;      // used to signal whether the node/v8 thread can exit or not (used as V8 ref/unref keep-alive handle)
+	uv_async_t asyncUnrefLogger;    // used to signal whether the node/v8 thread can exit or not
+
+	uv_mutex_t mutexRefLogger;
+	uint32_t needV8;                // 0 means can exit, > 0 mean can't
+	uint32_t needGreaseThread;
+	// when understanding the uv_async stuff, it's important to read this note: https://nikhilm.github.io/uvbook/threads.html#inter-thread-communication
+	// and realize that multiple calls to async_send only guarantee at least _one_ call of the callback
+
+	void refGreaseInGrease() {
+		uv_mutex_lock(&mutexRefLogger);
+		DBG_OUT("[ask for ref] needGreaseThread=%d",needGreaseThread+1);
+		if(needGreaseThread == 0) {
+			uv_ref((uv_handle_t *)&flushTimer);  // we use the flush timer to keep the grease thread up...
+			startFlushTimer();
+		}
+		needGreaseThread++;
+		uv_mutex_unlock(&mutexRefLogger);
+	}
+
+	void unrefGreaseInGrease() {
+		uv_mutex_lock(&mutexRefLogger);
+		assert(needGreaseThread > 0);
+		DBG_OUT("[unref] needGreaseThread=%d",needGreaseThread-1);
+		needGreaseThread--;
+		if(needGreaseThread < 1) {
+			uv_unref((uv_handle_t *)&flushTimer);
+			stopFlushTimer();
+		}
+		uv_mutex_unlock(&mutexRefLogger);
+	}
+
+	void refFromV8() {
+		uv_mutex_lock(&mutexRefLogger);
+		if(needV8 == 0) {
+			DBG_OUT("[ask for ref] needV8=%d",needV8);
+			uv_async_send(&asyncRefLogger);
+		}
+		needV8++;
+		uv_mutex_unlock(&mutexRefLogger);
+	}
+
+	// to be called from non-V8 thread
+	void unrefFromV8() {
+		uv_mutex_lock(&mutexRefLogger);
+		assert(needV8 > 0);  // FIXME
+		needV8--;
+		if(needV8 < 1) {
+			uv_async_send(&asyncUnrefLogger);
+		}
+		uv_mutex_unlock(&mutexRefLogger);
+	}
+
+	// to be called from V8 thread
+	void unrefFromV8_inV8() {
+		uv_mutex_lock(&mutexRefLogger);
+		assert(needV8 > 0);  // FIXME
+		needV8--;
+		DBG_OUT("[unref] needV8=%d",needV8);
+		if(needV8 == 0) {
+			uv_unref((uv_handle_t *)&asyncRefLogger);
+		}
+		int n = uv_loop_alive(uv_default_loop());
+		DBG_OUT("v8 loop_alive=%d\n",n);
+
+ 		uv_mutex_unlock(&mutexRefLogger);
+	}
+
+#if UV_VERSION_MAJOR > 0
+	static void refCb_Logger(uv_async_t* handle) {
+#else
+	static void refCb_Logger(uv_async_t* handle, int status) {
+#endif
+	  /* After closing the async handle, it will no longer keep the loop alive. */
+//		uv_mutex_lock(&LOGGER->mutexRefLogger);
+		uv_ref((uv_handle_t *)&LOGGER->asyncRefLogger);
+//		uv_mutex_unlock(&LOGGER->mutexRefLogger);
+	}
+
+#if UV_VERSION_MAJOR > 0
+	static void unrefCb_Logger(uv_async_t* handle) {
+#else
+	static void unrefCb_Logger(uv_async_t* handle, int status) {
+#endif
+//		uv_mutex_lock(&LOGGER->mutexRefLogger);
+		uv_unref((uv_handle_t *)&LOGGER->asyncRefLogger);
+//		uv_mutex_unlock(&LOGGER->mutexRefLogger);
+	}
+
 	TWlib::tw_safeCircular<target_start_info  *, LoggerAlloc > targetCallbackQueue;
 	_errcmn::err_ev err;
 
@@ -562,8 +652,6 @@ protected:
 	FilterId nextFilterId;
 	TargetId nextTargetId;
 	SinkId nextSinkId;
-
-
 
 
 	class Filter final {
@@ -599,7 +687,8 @@ protected:
 	public:
 		Filter list[MAX_IDENTICAL_FILTERS]; // a non-zero entry is valid. when encountering the first zero, the rest array elements are skipped
 		LevelMask bloom; // this is the bloom filter for the list. If this does not match, the list does not log this level
-		FilterList() : bloom(0) {}
+		bool filterOut;  // if true, then this entire list is filtered out - and will not be logged.
+		FilterList() : bloom(0), filterOut(false) {}
 		inline bool valid(LevelMask m) {
 			return (bloom & m);
 		}
@@ -1399,6 +1488,12 @@ protected:
 			handle.len = 0;
 			uv_mutex_unlock(&mutex);
 		}
+		bool isEmpty() {
+			uv_mutex_lock(&mutex);
+			bool ret = (handle.len == 0);
+			uv_mutex_unlock(&mutex);
+			return ret;
+		}
 		int remain() {
 			int ret = 0;
 			uv_mutex_lock(&mutex);
@@ -1718,16 +1813,24 @@ protected:
 		}
 
 		void returnBuffer(logBuf *b, bool sync = false, bool nocallback = false) {
-			if(!nocallback && logCallbackSet && b->handle.len > 0) {
+			bool isempty = b->isEmpty();
+			if(!isempty)
+				owner->unrefGreaseInGrease();
+			if(!nocallback && logCallbackSet && !isempty) {
 				writeCBData cbdat(this,b);
-				if(!owner->v8LogCallbacks.addMvIfRoom(cbdat)) {
-					if(owner->Opts.show_errors)
-						ERROR_OUT(" !!! v8LogCallbacks is full! Can't rotate. Callback will be skipped.");
-				}
-				if(!sync)
-					uv_async_send(&owner->asyncV8LogCallback);
-				else
+				if(sync) {
 					GreaseLogger::_doV8Callback(cbdat);
+				} else {
+					if(!owner->v8LogCallbacks.addMvIfRoom(cbdat)) {
+						if(owner->Opts.show_errors)
+							ERROR_OUT(" !!! v8LogCallbacks is full! Can't rotate. Callback will be skipped.");
+						b->clear();
+						availBuffers.add(b);
+					} else {
+						owner->refFromV8();
+						uv_async_send(&owner->asyncV8LogCallback);
+					}
+				}
 			} else {
 				b->clear();
 				availBuffers.add(b);
@@ -1735,6 +1838,7 @@ protected:
 		}
 
 		void returnBuffer(overflowWriteOut *b, bool sync = false, bool nocallback = false) {
+			owner->unrefGreaseInGrease();
 			if(!nocallback && logCallbackSet && b) {
 				writeCBData cbdat;
 				cbdat.t = this;
@@ -1743,8 +1847,10 @@ protected:
 					if(owner->Opts.show_errors)
 						ERROR_OUT(" !!! v8LogCallbacks is full! Can't rotate. Callback will be skipped.");
 				}
-				if(!sync)
+				if(!sync) {
+					owner->refFromV8();
 					uv_async_send(&owner->asyncV8LogCallback);
+				}
 				else
 					GreaseLogger::_doV8Callback(cbdat);
 			} else {
@@ -1853,8 +1959,9 @@ protected:
 			bool no_footer = true;
 			if(len_footer_buffer > 0) no_footer = false;
 
-			// TODO copy in header...
-			if(currentBuffer->remain() >= len+len_header_buffer) {
+			if(currentBuffer->remain() >= (int) (len+len_header_buffer+len_footer_buffer)) {
+				if(currentBuffer->isEmpty())
+					owner->refGreaseInGrease();
 				uv_mutex_lock(&writeMutex);
 				currentBuffer->copyIn(header_buffer,len_header_buffer, false); // false means skip delimiter
 				currentBuffer->copyIn(s,len,no_footer);
@@ -1869,6 +1976,7 @@ protected:
 					if(owner->internalCmdQueue.addMvIfRoom(req)) {
 						int id = 0;
 						uv_mutex_lock(&writeMutex);
+						owner->refGreaseInGrease(); // new buffer for use, do the ref
 						currentBuffer->copyIn(header_buffer,len_header_buffer, false);
 						currentBuffer->copyIn(s,len,no_footer);
 						if(!no_footer)
@@ -1928,6 +2036,7 @@ protected:
 			} else
 				delete delim_buf;
 
+			owner->refGreaseInGrease();
 			writeAsyncOverflow(bufs,false);
 		}
 
@@ -2205,9 +2314,9 @@ protected:
 				if(ft.current_size > ft.filerotation.max_file_size) {
 					HEAVY_DBG_OUT("Rotate: past max file size\n");
 					uv_fs_close(ft.owner->loggerLoop, &ft.fileFs, ft.fileHandle, NULL);
-					// TODO close file..
+
 					ft.rotate_files();
-					// TODO open new file..
+
 					int r = uv_fs_open(ft.owner->loggerLoop, &ft.fileFs, ft.myPath, ft.myFlags, ft.myMode, NULL); // use default loop because we need on_open() cb called in event loop of node.js
 #if (UV_VERSION_MAJOR > 0)
 //					DBG_OUT("uv_fs_open: return was: %d : %d\n", r); // poorly documented, but as sync func, r is the FD
@@ -2226,7 +2335,6 @@ protected:
 		}
 
 		static void write_cb(uv_fs_t* req) {
-//			HEAVY_DBG_OUT("write_cb");
 			HEAVY_DBG_OUT("file: write_cb()");
 #if (UV_VERSION_MAJOR > 0)
 			if(req->result < 0) {
@@ -2260,6 +2368,7 @@ protected:
 			singleLog *b = (singleLog *) req->data;
 			b->decRef();
 			uv_fs_req_cleanup(req);
+
 //			delete req;
 		}
 
@@ -2291,6 +2400,9 @@ protected:
 //			write_cb(&req);  // debug, skip actual write
 			uv_mutex_unlock(&b->mutex);
 //			b->clear(); // NOTE - there is a risk that this could get overwritten before it is written out.
+			int n = uv_loop_alive(LOGGER->loggerLoop);
+			DBG_OUT("loop_alive=%d\n",n);
+
 		}
 
 		int sync_n;
@@ -2319,11 +2431,12 @@ protected:
 			// libuv 1.x switch to a pwritev style function...
 			uv_buf_t bz[1];
 			bz[0] = b->handle;
-			uv_fs_write(owner->loggerLoop, &req, fileHandle, bz, 1, -1, write_cb);
+			uv_fs_write(owner->loggerLoop, &req, fileHandle, bz, 1, -1, NULL);
 #else
 			uv_fs_write(owner->loggerLoop, &req, fileHandle, (void *) b->handle.base, b->handle.len, -1, NULL);
 #endif
-//			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, NULL);
+			check_and_maybe_rotate(*this);
+			//			uv_write(req, (uv_stream_t *) &tty, &b->handle, 1, NULL);
 			uv_mutex_unlock(&b->mutex);
 			returnBuffer(b,true,nocallbacks);
 			uv_fs_req_cleanup(&req);
@@ -2760,6 +2873,9 @@ protected:
 #endif
 	static void mainThread(void *);
 
+	void startFlushTimer();
+	void stopFlushTimer();
+
 	void setupDefaultTarget(actionCB cb, target_start_info *data);
 
 	inline FilterHash filterhash(TagId tag, OriginId origin) {
@@ -2771,6 +2887,12 @@ protected:
 		hashes[0] = filterhash(tag,origin);
 		hashes[1] = hashes[0] & UINT64_C(0xFFFFFFFF00000000);
 		hashes[2] = hashes[0] & UINT64_C(0x00000000FFFFFFFF);
+	}
+
+	void _findOrAddFilterTable(OriginId origin, TagId tag) {
+		uv_mutex_lock(&nextIdMutex);
+		uv_mutex_unlock(&nextIdMutex);
+
 	}
 
 	bool _addFilter(TargetId t, OriginId origin, TagId tag, LevelMask level, FilterId &id,
@@ -2851,6 +2973,9 @@ public:
     static NAN_METHOD(AddOriginLabel);
     static NAN_METHOD(AddLevelLabel);
 
+
+    static NAN_METHOD(FilterOut);
+    static NAN_METHOD(FilterIn);
     static NAN_METHOD(AddFilter);
     static NAN_METHOD(RemoveFilter);
     static NAN_METHOD(ModifyFilter);
@@ -2898,6 +3023,8 @@ protected:
     	Opts(),
 //    	bufferSize(buffer_size), chunkSize(chunk_size),
     	masterBufferAvail(PRIMARY_BUFFER_ENTRIES),
+	    needV8(0),
+	    needGreaseThread(0),
     	targetCallbackQueue(MAX_TARGET_CALLBACK_STACK, true),
     	err(),
     	internalCmdQueue( INTERNAL_QUEUE_SIZE, true ),
@@ -2913,14 +3040,19 @@ protected:
     	tagLabels(), originLabels(), levelLabels(),
 	    loggerLoop(NULL)
     	{
-    	    LOGGER = this;
+    	   	LOGGER = this;
     	    loggerLoop = uv_loop_new();    // we use our *own* event loop (not the node/io.js one)
     	    Opts.bufferSize = buffer_size;
     	    Opts.chunkSize = chunk_size;
     	    uv_async_init(uv_default_loop(), &asyncTargetCallback, callTargetCallback);
     	    uv_async_init(uv_default_loop(), &asyncV8LogCallback, callV8LogCallbacks);
+    	    uv_async_init(uv_default_loop(), &asyncRefLogger, refCb_Logger);
+    	    uv_async_init(uv_default_loop(), &asyncUnrefLogger, unrefCb_Logger);
     	    uv_unref((uv_handle_t *)&asyncV8LogCallback);
     	    uv_unref((uv_handle_t *)&asyncTargetCallback);
+    	    uv_unref((uv_handle_t *)&asyncRefLogger);
+    	    uv_unref((uv_handle_t *)&asyncUnrefLogger);
+    	    uv_mutex_init(&mutexRefLogger);
     	    uv_mutex_init(&nextIdMutex);
     		uv_mutex_init(&modifyFilters);
     		uv_mutex_init(&modifyTargets);

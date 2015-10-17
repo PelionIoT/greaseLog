@@ -99,6 +99,8 @@ var setup = function(options) {
 	var default_sink = {unixDgram:"/tmp/grease.socket"};
 	var client_no_origin_as_pid = false;
 	var default_originN = undefined;
+	var old_style_API = false; // this is the API where: grease.warn(TAG,ORIGIN,MESSAGE)
+
 
 	if(options) {
 //		console.dir(options);
@@ -107,6 +109,7 @@ var setup = function(options) {
 		if(options.default_sink !== undefined) { default_sink = options.default_sink; }
 		if(options.client_only) { client_only = true; }
 		if(options.default_origin !== undefined) default_originN = options.default_origin;
+		old_style_API = options.old_style_API;
 	}
 
 	if(!client_only) {
@@ -236,64 +239,92 @@ var setup = function(options) {
 				// 	self._log(_n,arguments[0]);
 			}
 		} else {
-			self[_name] = function(){
-				if(self.MASK_OUT & _n) {
-					return; // fast track out - if this log function is turned off
-				}
-				// a caller used the log.X function with util.format style parameters						
-				if((typeof arguments[0] !== 'string' || arguments.length > 4) && (!(typeof arguments[0] == 'object' && arguments.length == 4))) {
-					var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
-					for(var n=0;n<arguments.length;n++) {
-						if(typeof arguments[n] !== 'string')
-							s += " " + util.inspect(arguments[n]);							
-						else
-							s += " " + arguments[n];
+			if(old_style_API) {
+				self[_name] = function(){
+					if(self.MASK_OUT & _n) {
+						return; // fast track out - if this log function is turned off
 					}
+					// a caller used the log.X function with util.format style parameters						
+					if((typeof arguments[0] !== 'string' || arguments.length > 4) && (!(typeof arguments[0] == 'object' && arguments.length == 4))) {
+						var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
+						for(var n=0;n<arguments.length;n++) {
+							if(typeof arguments[n] !== 'string')
+								s += " " + util.inspect(arguments[n]);							
+							else
+								s += " " + arguments[n];
+						}
+						self._log(_n,s);
+					} else {
+						if(arguments.length > 3)
+							self._log(_n,arguments[3],arguments[2],arguments[1],arguments[0]);
+						else if(arguments.length == 3)
+							self._log(_n,arguments[2],arguments[1],arguments[0]);
+						else if(arguments.length == 2)
+							self._log(_n,arguments[1],arguments[0]);
+						else
+							self._log(_n,arguments[0]);
+					}
+				}
+			} else {
+				// NEW STYLE API
+				self[_name] = function(){
+					if(self.MASK_OUT & _n) {
+						return; // fast track out - if this log function is turned off
+					}
+					var s = util.format.apply(undefined,arguments);
 					self._log(_n,s);
-				} else {
-					if(arguments.length > 3)
-						self._log(_n,arguments[3],arguments[2],arguments[1],arguments[0]);
-					else if(arguments.length == 3)
-						self._log(_n,arguments[2],arguments[1],arguments[0]);
-					else if(arguments.length == 2)
-						self._log(_n,arguments[1],arguments[0]);
-					else
-						self._log(_n,arguments[0]);
+				}
+				// extended API allows you to specify TAG, ORIGIN, etc
+				self[_name+'_ex'] = function() {
+					if(self.MASK_OUT & _n) {
+						return; // fast track out - if this log function is turned off
+					}
+					if(arguments.length > 1 && typeof arguments[0] === 'object') {                        
+						var argz = Array.prototype.slice.call(arguments);
+						argz.shift();
+						var s = util.format.apply(undefined,argz);
+						//(level,message,tag,origin,extras)
+						self._log(_n,s,arguments[0].tag,arguments[0].origin,arguments[0]);
+					} else {
+						var s = util.format.apply(undefined,arguments);
+						self._log(_n,s);
+					}
 				}
 			}
 		}
-		// make a LEVEL_fmt version of the log level command - this won't accept TAG or ORIGIN, but
-		// will let the user use multiple parameters, ala node.js - using util.format()
-		// example: log.debug_fmt("%d", 4)
-		self[_name+'_fmt'] = function() {
-			var s = util.format.apply(undefined,arguments);
-			self._log(_n,s);
-		}
-		// a LEVEL_tag_fmt variation.
-		// a variation allowing a tag and fancy formating.
-		// this is more expensive.
-		self[_name+'_tag_fmt'] = function() {
-			var args = [];
-			for(var n=1;n<arguments.length;n++)
-				args[n-1] = arguments[n];
-			var s = util.format.apply(undefined,args);
-			self._log(_n,s,arguments[0]);
-		}
-
-		// this is a LEVEL_trace version of the function.
-		// it provdes a location where the log was made. this is *very* expensive.
-		self[_name+'_trace'] = function() {
-			if(do_trace) {
+		if(old_style_API) {
+			// make a LEVEL_fmt version of the log level command - this won't accept TAG or ORIGIN, but
+			// will let the user use multiple parameters, ala node.js - using util.format()
+			// example: log.debug_fmt("%d", 4)
+			self[_name+'_fmt'] = function() {
+				var s = util.format.apply(undefined,arguments);
+				self._log(_n,s);
+			}
+			// a LEVEL_tag_fmt variation.
+			// a variation allowing a tag and fancy formating.
+			// this is more expensive.
+			self[_name+'_tag_fmt'] = function() {
 				var args = [];
-				for(var n=0;n<arguments.length;n++)
-					args[n] = arguments[n];
-				var d = getStack();
+				for(var n=1;n<arguments.length;n++)
+					args[n-1] = arguments[n];
 				var s = util.format.apply(undefined,args);
-				self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+s,arguments[0],d.subdir+d.file);						
-			} else
-				self[_name+'_tag_fmt'].apply(self,arguments);
-		}
+				self._log(_n,s,arguments[0]);
+			}
 
+			// this is a LEVEL_trace version of the function.
+			// it provdes a location where the log was made. this is *very* expensive.
+			self[_name+'_trace'] = function() {
+				if(do_trace) {
+					var args = [];
+					for(var n=0;n<arguments.length;n++)
+						args[n] = arguments[n];
+					var d = getStack();
+					var s = util.format.apply(undefined,args);
+					self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+s,arguments[0],d.subdir+d.file);						
+				} else
+					self[_name+'_tag_fmt'].apply(self,arguments);
+			}
+		}
 	}
 
 

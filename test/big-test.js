@@ -137,10 +137,10 @@ logger.addTarget({
 					var interval = setInterval(function(){
 						for(var n=0;n<1000;n++) {
 								logger.debug("....DEBUG(1)....");
-							logger.debug('Eds', "....DEBUG(2)....");			
+							logger.debug_ex({tag:'Eds'}, "....DEBUG(2)....");			
 							logger.error("....ERROR....");
 							logger.log(" log log log");
-							logger.debug('special.js','Eds','...origin/Eds DEBUG....');
+							logger.debug_ex({origin:'special.js',tag:'Eds'},'...origin/Eds DEBUG....');
 							// console.log("....DEBUG....");
 							// console.log('Eds', "....DEBUG....");			
 							// console.log("....ERROR....");

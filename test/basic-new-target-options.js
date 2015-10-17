@@ -77,13 +77,13 @@ logger.addTarget({
 		}		
 
 		var N = 10000;
-		logger.debug('rotate',"************ FIRST **********");
+		logger.debug_ex({tag:'rotate'},"************ FIRST **********");
 		var i =	setInterval(function(){
 			N = N - 200;
 			for(var n=0;n<200;n++)
-				logger.debug('rotate',"....rotate me ["+(N-n+200)+"]....");
+				logger.debug_ex({tag:'rotate'},"....rotate me ["+(N-n+200)+"]....");
 			if(N == 0) {
-				logger.debug('rotate',"************ LAST **********");
+				logger.debug_ex({tag:'rotate'},"************ LAST **********");
 				clearInterval(i);
 			}
 		},100);
