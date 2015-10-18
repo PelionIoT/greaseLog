@@ -138,6 +138,7 @@ void TestModule::do_somelogging(uv_work_t *req) {
 }
 
 void TestModule::post_work(uv_work_t *req, int status) {
+	Nan::HandleScope scope;
 	workReq *job = (workReq *) req->data;
 	const unsigned argc = 3;
 	Local<Value> argv[argc];
