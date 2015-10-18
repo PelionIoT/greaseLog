@@ -26,6 +26,7 @@ var setup = function(options) {
 		return ((pid & 0xFFFFFFFF) | 0x15000000); // add value to avoid stepping on origin IDs which might be statically setup
 	}
 
+	var process_name = 'process';
 	var PID = this.makeOriginIdFromPid(process.pid); // to avoid calling an Accessor constantly, if that's what this does. 
 //	console.log("my pid = " + PID);										      
 
@@ -100,7 +101,7 @@ var setup = function(options) {
 	var client_no_origin_as_pid = false;
 	var default_originN = undefined;
 	var old_style_API = false; // this is the API where: grease.warn(TAG,ORIGIN,MESSAGE)
-
+	var always_use_origin = false;
 
 	if(options) {
 //		console.dir(options);
@@ -109,6 +110,7 @@ var setup = function(options) {
 		if(options.default_sink !== undefined) { default_sink = options.default_sink; }
 		if(options.client_only) { client_only = true; }
 		if(options.default_origin !== undefined) default_originN = options.default_origin;
+		if(options.always_use_origin) always_use_origin = true;
 		old_style_API = options.old_style_API;
 	}
 
@@ -267,28 +269,59 @@ var setup = function(options) {
 				}
 			} else {
 				// NEW STYLE API
-				self[_name] = function(){
-					if(self.MASK_OUT & _n) {
-						return; // fast track out - if this log function is turned off
-					}
-					var s = util.format.apply(undefined,arguments);
-					self._log(_n,s);
-				}
-				// extended API allows you to specify TAG, ORIGIN, etc
-				self[_name+'_ex'] = function() {
-					if(self.MASK_OUT & _n) {
-						return; // fast track out - if this log function is turned off
-					}
-					if(arguments.length > 1 && typeof arguments[0] === 'object') {                        
-						var argz = Array.prototype.slice.call(arguments);
-						argz.shift();
-						var s = util.format.apply(undefined,argz);
-						//(level,message,tag,origin,extras)
-						self._log(_n,s,arguments[0].tag,arguments[0].origin,arguments[0]);
-					} else {
+				if(always_use_origin) {
+					self[_name] = function(){
+						if(self.MASK_OUT & _n) {
+							return; // fast track out - if this log function is turned off
+						}
+						var s = util.format.apply(undefined,arguments);
+						self._log(_n,s,undefined,process_name);
+					}			
+				} else {
+					self[_name] = function(){
+						if(self.MASK_OUT & _n) {
+							return; // fast track out - if this log function is turned off
+						}
 						var s = util.format.apply(undefined,arguments);
 						self._log(_n,s);
+					}			
+				}
+				// extended API allows you to specify TAG, ORIGIN, etc
+				if(always_use_origin) {
+					self[_name+'_ex'] = function() {
+						if(self.MASK_OUT & _n) {
+							return; // fast track out - if this log function is turned off
+						}
+						if(arguments.length > 1 && typeof arguments[0] === 'object') {                        
+							var argz = Array.prototype.slice.call(arguments);
+							argz.shift();
+							var s = util.format.apply(undefined,argz);
+							//(level,message,tag,origin,extras)
+							if(arguments[0].origin === undefined)
+								self._log(_n,s,arguments[0].tag,process_name,arguments[0]);
+							else
+								self._log(_n,s,arguments[0].tag,arguments[0].origin,arguments[0]);
+						} else {
+							var s = util.format.apply(undefined,arguments);
+							self._log(_n,s,undefined,process_name);
+						}
 					}
+				} else {
+					self[_name+'_ex'] = function() {
+						if(self.MASK_OUT & _n) {
+							return; // fast track out - if this log function is turned off
+						}
+						if(arguments.length > 1 && typeof arguments[0] === 'object') {                        
+							var argz = Array.prototype.slice.call(arguments);
+							argz.shift();
+							var s = util.format.apply(undefined,argz);
+							//(level,message,tag,origin,extras)
+							self._log(_n,s,arguments[0].tag,arguments[0].origin,arguments[0]);
+						} else {
+							var s = util.format.apply(undefined,arguments);
+							self._log(_n,s);
+						}
+					}										
 				}
 			}
 		}
@@ -449,6 +482,11 @@ var setup = function(options) {
 		getTagId("console",0xFFF02);
 		getTagId("native",0xFFF03);
 
+		this.setProcessName = function(s) {
+			process_name = s;
+			instance.addOriginLabel(PID,s);	
+		}
+		this.setProcessName(process_name);
 
 
 	}
@@ -461,12 +499,6 @@ var setup = function(options) {
 
 	var stdoutTag = getTagId("stdout");
 	var stderrTag = getTagId("stderr");
-
-
-
-	this.setProcessName = function(s) {
-		instance.addOriginLabel(PID,s);	
-	}
 
 	this.stdoutWriteOverride = function(s) {
 		if(s.length > 0) {	

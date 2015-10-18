@@ -1,6 +1,9 @@
 // basic test of logging.
 var util = require('util');
-var logger = require('../index.js')();
+var logger = require('../index.js')({
+	always_use_origin: true   // this will always make the 'origin' value the process name, 
+	                          // if not explicitly provided
+});
 var cp = require('child_process');
 
 //console.dir(logger);
@@ -148,8 +151,8 @@ setTimeout(function(){
 					console.error("Hello. Error. " + n);				
 					console.warn("Hello. Warn." + n);				
 					console.dir({hello:"there", n: n});
-
 					logger.info("Hello log.");
+					logger.info_ex({tag:'special'},"Hello log tag.");
 				}
 			},1000);
 // 		}
