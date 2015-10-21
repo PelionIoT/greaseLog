@@ -491,6 +491,10 @@ var setup = function(options) {
 
 	}
 
+	this.getDefaultSink = function() {
+		return default_sink;
+	};
+
 	this.setGlobalOpts = function(obj) {
 		if(obj.levelFilterOutMask)
 			self.MASK_OUT = obj.levelFilterOutMask;
