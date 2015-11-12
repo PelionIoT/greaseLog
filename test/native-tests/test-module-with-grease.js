@@ -55,6 +55,7 @@ var clearme = setInterval(function(){
 	for(var n=0;n<4;n++) {
 		logger.log("I am from node.js"); // most of these will be at the end, that's ok for this test
 		logger.debug("I am from node.js"); // most of these will be at the end, that's ok for this test
+		logger.trace("I am from node.js");
 	}
 },100); 
 

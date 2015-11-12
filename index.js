@@ -205,43 +205,72 @@ var setup = function(options) {
 	 * log.LEVEL(message)
 	 */
 	var createfunc = function(_name,_n) {
-		if(_name == 'trace') {  
-			self[_name] = function(){ // trace is special
-				if(self.MASK_OUT & _n) {
-					return; // fast track out - if this log function is turned off
-				}
-				var args = [];
-				for(var n=0;n<arguments.length;n++)
-					args[n] = arguments[n];
-				var d = getStack();
-//						var stk = util.format.apply(undefined,args);
-//						if((typeof arguments[0] !== 'string' || arguments.length > 4)&&(!(typeof arguments[0] !== 'object' && arguments.length == 4))) {
-				if(typeof arguments[0] !== 'string' || arguments.length > 4) {
-					var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
-					for(var n=0;n<arguments.length;n++) {
-						if(typeof arguments[n] !== 'string')
-							s += " " + util.inspect(arguments[n]);							
-						else
-							s += " " + arguments[n];
-					}
-					self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+ s,d.subdir+d.file);														
-				} else {
-					if(arguments.length > 1)		
-						self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],arguments[1],d.subdir+d.file);
-					else
-						self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],d.subdir+d.file);														
-				}
+// 		if(_name == 'trace') {  
+// 			self[_name] = function(){ // trace is special
+// 				if(self.MASK_OUT & _n) {
+// 					return; // fast track out - if this log function is turned off
+// 				}
+// 				var args = [];
+// 				for(var n=0;n<arguments.length;n++)
+// 					args[n] = arguments[n];
+// 				var d = getStack();
+// //						var stk = util.format.apply(undefined,args);
+// //						if((typeof arguments[0] !== 'string' || arguments.length > 4)&&(!(typeof arguments[0] !== 'object' && arguments.length == 4))) {
+// 				if(typeof arguments[0] !== 'string' || arguments.length > 4) {
+// 					var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
+// 					for(var n=0;n<arguments.length;n++) {
+// 						if(typeof arguments[n] !== 'string')
+// 							s += " " + util.inspect(arguments[n]);							
+// 						else
+// 							s += " " + arguments[n];
+// 					}
+// 					self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+ s,d.subdir+d.file);														
+// 				} else {
+// 					if(arguments.length > 1)		
+// 						self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],arguments[1],d.subdir+d.file);
+// 					else
+// 						self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],d.subdir+d.file);														
+// 				}
 
-//					console.log("log: " + util.inspect(arguments));
-				// if(arguments.length > 2)
-				// 	self._log(_n,arguments[2],arguments[1],arguments[0]);
-				// else if(arguments.length == 2)
-				// 	self._log(_n,arguments[1],arguments[0]);
-				// else
-				// 	self._log(_n,arguments[0]);
-			}
-		} else {
-			if(old_style_API) {
+// //					console.log("log: " + util.inspect(arguments));
+// 				// if(arguments.length > 2)
+// 				// 	self._log(_n,arguments[2],arguments[1],arguments[0]);
+// 				// else if(arguments.length == 2)
+// 				// 	self._log(_n,arguments[1],arguments[0]);
+// 				// else
+// 				// 	self._log(_n,arguments[0]);
+// 			}
+// 		} else {
+		if(old_style_API) {
+			if(_name == 'trace') {
+				self[_name] = function(){ // trace is special
+					if(self.MASK_OUT & _n) {
+						return; // fast track out - if this log function is turned off
+					}
+					var args = [];
+					for(var n=0;n<arguments.length;n++)
+						args[n] = arguments[n];
+					var d = getStack();
+		//						var stk = util.format.apply(undefined,args);
+		//						if((typeof arguments[0] !== 'string' || arguments.length > 4)&&(!(typeof arguments[0] !== 'object' && arguments.length == 4))) {
+					if(typeof arguments[0] !== 'string' || arguments.length > 4) {
+						var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
+						for(var n=0;n<arguments.length;n++) {
+							if(typeof arguments[n] !== 'string')
+								s += " " + util.inspect(arguments[n]);							
+							else
+								s += " " + arguments[n];
+						}
+						self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+ s,d.subdir+d.file);														
+					} else {
+						if(arguments.length > 1)		
+							self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],arguments[1],d.subdir+d.file);
+						else
+							self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],d.subdir+d.file);														
+					}
+				}
+			} // end trace
+			else {
 				self[_name] = function(){
 					if(self.MASK_OUT & _n) {
 						return; // fast track out - if this log function is turned off
@@ -267,7 +296,42 @@ var setup = function(options) {
 							self._log(_n,arguments[0]);
 					}
 				}
-			} else {
+			}
+		} else { // NEW STYLE API
+			if(_name == 'trace') {
+				if(always_use_origin) {
+					self[_name] = function(){ // trace is special
+						if(self.MASK_OUT & _n) {
+							return; // fast track out - if this log function is turned off
+						}
+						var d = getStack();
+						var argz = Array.prototype.slice.call(arguments);
+						argz.unshift("["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] ");
+						var s = util.format.apply(undefined,argz);
+						self._log(_n,s,undefined,process_name);
+						// if(arguments.length > 1)		
+						// 	self._log(_n, + arguments[0],arguments[1],d.subdir+d.file);
+						// else
+						// 	self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],d.subdir+d.file);														
+					}
+				} else {
+					self[_name] = function(){ // trace is special
+						if(self.MASK_OUT & _n) {
+							return; // fast track out - if this log function is turned off
+						}
+						var d = getStack();
+						var argz = Array.prototype.slice.call(arguments);
+						argz.unshift("["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] ");
+						var s = util.format.apply(undefined,argz);
+						self._log(_n,s);
+						// if(arguments.length > 1)		
+						// 	self._log(_n, + arguments[0],arguments[1],d.subdir+d.file);
+						// else
+						// 	self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] " + arguments[0],d.subdir+d.file);														
+					}
+				}
+			} // end trace
+			else {
 				// NEW STYLE API
 				if(always_use_origin) {
 					self[_name] = function(){
@@ -325,6 +389,8 @@ var setup = function(options) {
 				}
 			}
 		}
+
+
 		if(old_style_API) {
 			// make a LEVEL_fmt version of the log level command - this won't accept TAG or ORIGIN, but
 			// will let the user use multiple parameters, ala node.js - using util.format()
