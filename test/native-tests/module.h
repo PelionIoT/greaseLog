@@ -8,6 +8,9 @@
 #ifndef PSEUDO_FS_H
 #define _6LBR_NODE_H
 
+#include "nan.h"
+
+
 #include <v8.h>
 #include <node.h>
 #include <uv.h>
@@ -208,24 +211,22 @@ protected:
 //	static void timercb_pseudofs(uv_timer_t *h, int status);
 //	static void uv_close_handle_cb(uv_handle_t* handle);
 public:
-	static Handle<Value> Init(const Arguments& args);
-//	static void ExtendFrom(const Arguments& args);
-//    static void Shutdown();
 
     static Persistent<Function> constructor_template;
-    static Handle<Value> New(const Arguments& args);
+//    static Handle<Value> New(const Arguments& args);
+    static NAN_METHOD(New);
 
 
 //    static Handle<Value> GetReadChunkSize(Local<String> property, const AccessorInfo &info);
 //    static void SetReadChunkSize(Local<String> property, Local<Value> val, const AccessorInfo &info);
 
-
-    static Handle<Value> DoSomeLoggin(const Arguments& args);
+    static NAN_METHOD(DoSomeLoggin);
+//    static Handle<Value> DoSomeLoggin(const Arguments& args);
 //    static Handle<Value> WritePseudofile(const Arguments& args);
 
 
 
-    static Persistent<Function> constructor;
+    static Nan::Persistent<v8::Function> constructor;
     static Persistent<ObjectTemplate> prototype;
 
     TestModule(char *path = NULL) :
@@ -235,7 +236,6 @@ public:
     	read_chunk_size(READ_DEFAULT_CHUNK_SIZE),
     	onDataCB()
     	{
-    		_path = ::strdup(path);
     	}
 
     ~TestModule() {

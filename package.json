@@ -1,6 +1,6 @@
 {
   "name": "grease-log",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "Fast, production logging subsystem",
   "main": "index.js",
   "keywords": [
@@ -21,8 +21,8 @@
     "url": "https://github.com/WigWagCo/greaseLog/issues"
   },
   "gypfile": true,
-  "scripts": {
-    "install": "node-gyp rebuild"
+  "dependencies": {
+    "nan": "^2.1.0"
   },
   "homepage": "https://github.com/WigWagCo/greaseLog",
   "directories": {

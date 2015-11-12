@@ -8,8 +8,7 @@
 #ifndef ERROR_COMMON_H_
 #define ERROR_COMMON_H_
 
-
-
+#include "nan.h"
 #include <string.h>
 #include <stdlib.h>
 
@@ -25,25 +24,42 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+
 // https://gcc.gnu.org/onlinedocs/cpp/Stringification.html
 #define xstr(s) str(s)
 #define str(s) #s
 
 // concept from node.js src/node_constants.cc
+//#define _ERRCMN_DEFINE_CONSTANT(target, constant)
+//  (target)->Set(v8::String::NewSymbol(#constant),
+//                v8::Number::New(constant),
+//                static_cast<v8::PropertyAttribute>(
+//                    v8::ReadOnly|v8::DontDelete))
+
 #define _ERRCMN_DEFINE_CONSTANT(target, constant)                         \
-  (target)->Set(v8::String::NewSymbol(#constant),                         \
-                v8::Number::New(constant),                                \
+  Nan::ForceSet(target,Nan::New(#constant).ToLocalChecked(),               \
+                Nan::New((uint32_t)constant),                                \
                 static_cast<v8::PropertyAttribute>(                       \
                     v8::ReadOnly|v8::DontDelete))
 
-// our mode - this is the same thing, with a reverse lookup key also
+//// our mode - this is the same thing, with a reverse lookup key also
+//#define _ERRCMN_DEFINE_CONSTANT_WREV(target, constant)
+//  (target)->Set(v8::String::NewSymbol(#constant),
+//                v8::Number::New(constant),
+//                static_cast<v8::PropertyAttribute>(
+//                    v8::ReadOnly|v8::DontDelete));
+//  (target)->Set(v8::String::New( xstr(constant) ),
+//                v8::String::New(#constant),
+//                static_cast<v8::PropertyAttribute>(
+//                    v8::ReadOnly|v8::DontDelete));
+
 #define _ERRCMN_DEFINE_CONSTANT_WREV(target, constant)                    \
-  (target)->Set(v8::String::NewSymbol(#constant),                         \
-                v8::Number::New(constant),                                \
+  Nan::ForceSet(target,Nan::New(#constant).ToLocalChecked(),                 \
+                Nan::New((uint32_t)constant),                                \
                 static_cast<v8::PropertyAttribute>(                       \
                     v8::ReadOnly|v8::DontDelete));                        \
-  (target)->Set(v8::String::New( xstr(constant) ),                                \
-                v8::String::New(#constant),                         \
+  Nan::ForceSet(target, Nan::New( xstr(constant) ).ToLocalChecked(),        \
+                Nan::New(#constant).ToLocalChecked(),                         \
                 static_cast<v8::PropertyAttribute>(                       \
                     v8::ReadOnly|v8::DontDelete));                        \
 
@@ -92,6 +108,20 @@ namespace _errcmn {
 
 #ifndef NO_ERROR_CMN_OUTPUT  // if define this, you must define these below yourself
 
+
+// ensure we get the XSI compliant strerror_r():
+// see: http://man7.org/linux/man-pages/man3/strerror.3.html
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+extern int __xpg_strerror_r (int __errnum, char *__buf, size_t __buflen);
+#ifdef __cplusplus
+};
+#endif
+
+
+#define ERR_STRERROR_R(ernum,b,len) __xpg_strerror_r(ernum, b, len)
 
 #ifdef ERRCMN_DEBUG_BUILD
 #pragma message "Build is Debug"

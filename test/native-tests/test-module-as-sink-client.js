@@ -42,7 +42,9 @@ try {
 		console.error("Error in loading test module [debug]: " + e + " --> " + e.stack);
 }
 
-testmodule.doSomeLoggin("Hello",100,10,function(){
+var tester = testmodule.testModule();
+
+tester.doSomeLoggin("NativeHello",100,10,function(){
 	console.log("native test over");
 });
 

@@ -42,7 +42,9 @@
       ],
       "include_dirs": [
          "deps/twlib/include",
-         "deps/build/include"
+         "deps/build/include",
+       	 "node_modules/nan",
+         "<!(node -e \"require('nan')\")"    # note, this is needed b/c with 'npm install' it places 'nan' in a different location - this may break in Yocto bb recipe
       ],
       'link_settings': {
             'libraries': [
@@ -119,11 +121,12 @@
       'configurations': {
         'Debug': {
           "ldflags" : ["-ldl"],
-          "cflags" : ["-ldl"]
+          "cflags" : ["-ldl","-DGLOG_DEFAULT_TAG=GREASE_TAG_ECHO"]
         },
         'Release': {
           "ldflags" : ["-ldl"],
-          "cflags" : ["-ldl"]        }
+          "cflags" : ["-ldl","-DGLOG_DEFAULT_TAG=GREASE_TAG_ECHO"]        
+          }
       }
       }  ] ]
 
@@ -172,7 +175,9 @@
       ],
       "include_dirs": [
          "deps/twlib/include",
-         "deps/build/include"
+         "deps/build/include",
+	       "node_modules/nan",
+         "<!(node -e \"require('nan')\")"    # note, this is needed b/c with 'npm install' it places 'nan' in a different location - this may break in Yocto bb recipe
       ],
       'link_settings': {
             'libraries': [

@@ -11,7 +11,8 @@
       ],
 
       "include_dirs": [
-      "../.."
+      "../..",
+      "../../node_modules/nan"
       ],
 
       "cflags": [

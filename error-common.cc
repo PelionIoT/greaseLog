@@ -7,23 +7,8 @@
  */
 
 
-// ensure we get the XSI compliant strerror_r():
-// see: http://man7.org/linux/man-pages/man3/strerror.3.html
-
-#ifdef _POSIX_C_SOURCE
-#undef _POSIX_C_SOURCE
-#endif
-#define _POSIX_C_SOURCE 200112L
-
-#ifdef _GNU_SOURCE
-#undef _GNU_SOURCE
-#endif
-
 
 #include "error-common.h"
-
-// ensure we get the XSI compliant strerror_r():
-// see: http://man7.org/linux/man-pages/man3/strerror.3.html
 
 
 
@@ -935,7 +920,7 @@ custom_errno custom_errs[] = {
 
 	char *get_error_str(int _errno) {
 		char *ret = (char *) malloc(max_error_buf);
-		int r = strerror_r(_errno,ret,max_error_buf);
+		int r = ERR_STRERROR_R(_errno,ret,max_error_buf);
 		if ( r != 0 ) DBG_OUT("strerror_r bad return: %d\n",r);
 		return ret;
 	}
@@ -964,7 +949,7 @@ custom_errno custom_errs[] = {
 	}
 
 	v8::Local<v8::Value> errno_to_JS(int _errno, const char *prefix) {
-		v8::Local<v8::Object> retobj = v8::Object::New();
+		v8::Local<v8::Object> retobj = Nan::New<v8::Object>();
 
 		if(_errno) {
 			char *temp = NULL;
@@ -980,20 +965,20 @@ custom_errno custom_errs[] = {
 					} else {
 						temp = errstr;
 					}
-					retobj->Set(v8::String::New("message"), v8::String::New(temp));
+					Nan::Set(retobj,Nan::New("message").ToLocalChecked(), Nan::New(temp).ToLocalChecked());
 					free_error_str(errstr);
 					if(prefix) {
 						free(temp);
 					}
 				}
 			}
-			retobj->Set(v8::String::New("errno"), v8::Integer::New(_errno));
+			Nan::Set(retobj,Nan::New("errno").ToLocalChecked(), Nan::New((uint32_t)_errno));
 		}
 		return retobj;
 	}
 
 	v8::Local<v8::Value> errno_to_JSError(int _errno, const char *prefix) {
-		v8::Local<v8::Value> retobj;
+		v8::Local<v8::Object> retobj;
 		bool custom = false;
 		if(_errno) {
 			char *temp = NULL;
@@ -1014,7 +999,7 @@ custom_errno custom_errs[] = {
 					} else {
 						temp = errstr;
 					}
-					retobj = v8::Exception::Error(v8::String::New(temp));
+					retobj = Nan::Error(Nan::New(temp).ToLocalChecked())->ToObject();
 
 					if(!custom) {
 						free_error_str(errstr);
@@ -1024,17 +1009,18 @@ custom_errno custom_errs[] = {
 					}
 
 			} else
-				retobj = v8::Exception::Error(v8::String::New("Error"));
+				retobj = Nan::Error(Nan::New("Error").ToLocalChecked())->ToObject();
+//				retobj = v8::Exception::Error(v8::String::New("Error"));
 
-			retobj->ToObject()->Set(v8::String::New("errno"), v8::Integer::New(_errno));
+			Nan::Set(retobj->ToObject(),Nan::New("errno").ToLocalChecked(), Nan::New((uint32_t)_errno));
 		}
 		return retobj;
 	}
 
 	v8::Handle<v8::Value> err_ev_to_JS(err_ev &e, const char *prefix) {
-		v8::HandleScope scope;
+		Nan::EscapableHandleScope scope;
 	//		v8::Local<v8::Object> retobj = v8::Object::New();
-		v8::Local<v8::Value> retobj = v8::Local<v8::Primitive>::New(v8::Undefined());
+		v8::Local<v8::Value> retobj = Nan::Undefined();
 
 		if(e.hasErr()) {
 			char *temp = NULL;
@@ -1045,13 +1031,13 @@ custom_errno custom_errs[] = {
 				strcpy(temp, prefix);
 				strcat(temp, e.errstr);
 	//				retobj->Set(v8::String::New("message"), v8::String::New(temp));
-				retobj = v8::Exception::Error(v8::String::New(temp));
+				retobj = Nan::Error(temp);
 				free(temp);
 			}
-			else retobj = v8::Exception::Error(v8::String::New("Error"));
-			retobj->ToObject()->Set(v8::String::New("errno"), v8::Integer::New(e._errno));
+			else retobj = Nan::Error("Error");
+			Nan::Set(retobj->ToObject(),Nan::New("errno").ToLocalChecked(), Nan::New((uint32_t)e._errno));
 		}
-		return scope.Close(retobj);
+		return scope.Escape(retobj);
 	}
 
 

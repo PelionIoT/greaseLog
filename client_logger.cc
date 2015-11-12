@@ -10,6 +10,8 @@
 #include <uv.h>
 #include <node_buffer.h>
 
+#include "nan.h"
+
 using namespace node;
 using namespace v8;
 
@@ -27,54 +29,63 @@ using namespace v8;
 
 using namespace Grease;
 
-Persistent<Function> GreaseLoggerClient::constructor;
+Nan::Persistent<Function> GreaseLoggerClient::constructor;
 
 Grease::GreaseLoggerClient *Grease::GreaseLoggerClient::CLIENT;
 
-Handle<Value> GreaseLoggerClient::SetGlobalOpts(const Arguments& args) {
-	HandleScope scope;
-
+NAN_METHOD(GreaseLoggerClient::SetGlobalOpts) {
 	GreaseLoggerClient *l = GreaseLoggerClient::setupClass();
 	Local<Function> cb;
 
-	if(args.Length() < 1 || !args[0]->IsObject()) {
-		return ThrowException(Exception::TypeError(String::New("setGlobalOpts: bad parameters")));
+	if(info.Length() < 1 || !info[0]->IsObject()) {
+		Nan::ThrowTypeError("setGlobalOpts: bad parameters");
+		return;
 	}
 
-	Local<Object> jsObj = args[0]->ToObject();
+	Local<Object> jsObj = info[0]->ToObject();
 //	l->levelFilterOutMask
-	Local<Value> jsVal = jsObj->Get(String::New("levelFilterOutMask"));
-
-	if(jsVal->Uint32Value()) {
-		l->Opts.levelFilterOutMask = jsVal->Uint32Value();
+	Nan::MaybeLocal<Value> jsVal = Nan::Get(jsObj,Nan::New("levelFilterOutMask").ToLocalChecked());
+	Local<Value> jsAVal;
+	if(jsVal.ToLocal(&jsAVal)) {
+		if(!jsAVal.IsEmpty() && jsAVal->Uint32Value()) {
+			l->Opts.levelFilterOutMask = jsAVal->Uint32Value();
+		}
 	}
 
-	jsVal = jsObj->Get(String::New("defaultFilterOut"));
-	if(jsVal->IsBoolean()) {
-		bool v = jsVal->ToBoolean()->BooleanValue();
-		l->Opts.defaultFilterOut = v;
+	jsVal = Nan::Get(jsObj,Nan::New("defaultFilterOut").ToLocalChecked());
+	if(jsVal.ToLocal(&jsAVal)) {
+		if(jsAVal->IsBoolean()) {
+			bool v = jsAVal->ToBoolean()->BooleanValue();
+			l->Opts.defaultFilterOut = v;
+		}
 	}
 
-//	req->completeCB = Persistent<Function>::New(Local<Function>::Cast(args[0]));
-	jsVal = jsObj->Get(String::New("onSinkFailureCB"));
-	if(jsVal->IsFunction()) {
-		l->Opts.lock();
-		l->Opts.onSinkFailureCB = Persistent<Function>::New(Local<Function>::Cast(jsVal));
-		l->Opts.unlock();
+
+	//	req->completeCB = Persistent<Function>::New(Local<Function>::Cast(args[0]));
+	jsVal = Nan::Get(jsObj,Nan::New("onSinkFailureCB").ToLocalChecked());
+	if(jsVal.ToLocal(&jsAVal)) {
+		if(jsAVal->IsFunction()) {
+			l->Opts.lock();
+			l->Opts.onSinkFailureCB = new Nan::Callback(Local<Function>::Cast(jsAVal));
+			l->Opts.unlock();
+		}
 	}
 
-	jsVal = jsObj->Get(String::New("show_errors"));
-	if(jsVal->IsBoolean()) {
-		bool v = jsVal->ToBoolean()->BooleanValue();
-		l->Opts.show_errors = v;
-	}
-	jsVal = jsObj->Get(String::New("callback_errors"));
-	if(jsVal->IsBoolean()) {
-		bool v = jsVal->ToBoolean()->BooleanValue();
-		l->Opts.callback_errors = v;
-	}
 
-	return scope.Close(Undefined());
+	jsVal = Nan::Get(jsObj,Nan::New("show_errors").ToLocalChecked());
+	if(jsVal.ToLocal(&jsAVal)) {
+		if(jsAVal->IsBoolean()) {
+			bool v = jsAVal->ToBoolean()->BooleanValue();
+			l->Opts.show_errors = v;
+		}
+	}
+	jsVal = Nan::Get(jsObj,Nan::New("callback_errors").ToLocalChecked());
+	if(jsVal.ToLocal(&jsAVal)) {
+		if(jsAVal->IsBoolean()) {
+			bool v = jsAVal->ToBoolean()->BooleanValue();
+			l->Opts.callback_errors = v;
+		}
+	}
 }
 
 /**
@@ -82,8 +93,7 @@ Handle<Value> GreaseLoggerClient::SetGlobalOpts(const Arguments& args) {
  * @param args
  * @return
  */
-Handle<Value> GreaseLoggerClient::Start(const Arguments& args) {
-	HandleScope scope;
+NAN_METHOD(GreaseLoggerClient::Start) {
 	GreaseLoggerClient *l = GreaseLoggerClient::setupClass();
 
 	int r = grease_initLogger();
@@ -91,7 +101,7 @@ Handle<Value> GreaseLoggerClient::Start(const Arguments& args) {
 		l->sinkFailureNeedsCall = true;
 	}
 	l->greaseConnectMethod = grease_getConnectivityMethod();
-	return scope.Close(Integer::New(r));
+	info.GetReturnValue().Set(Nan::New((int32_t) r));
 }
 
 /**
@@ -105,52 +115,54 @@ Handle<Value> GreaseLoggerClient::Start(const Arguments& args) {
  * @method log
  *
  */
-Handle<Value> GreaseLoggerClient::Log(const Arguments& args) {
+NAN_METHOD(GreaseLoggerClient::Log) {
 	static extra_logMeta meta; // static - this call is single threaded from node.
 	ZERO_LOGMETA(meta.m);
-	HandleScope scope;
 //	uint32_t target = GREASE_DEFAULT_TARGET_ID;
-	if(args.Length() > 1 && args[0]->IsString() && args[1]->IsInt32()){
+	if(info.Length() > 1 && info[0]->IsString() && info[1]->IsInt32()){
 		GreaseLoggerClient *l = GreaseLoggerClient::setupClass();
-		v8::String::Utf8Value v8str(args[0]->ToString());
-		meta.m.level = (uint32_t) args[1]->Int32Value(); // level
+		Nan::Utf8String v8str(info[0]->ToString());
+		meta.m.level = (uint32_t) info[1]->Int32Value(); // level
 
-		if(args.Length() > 2 && args[2]->IsInt32()) // tag
-			meta.m.tag = (uint32_t) args[2]->Int32Value();
+		if(info.Length() > 2 && info[2]->IsInt32()) // tag
+			meta.m.tag = (uint32_t) info[2]->Int32Value();
 		else
 			meta.m.tag = 0;
 
-		if(args.Length() > 3 && args[3]->IsInt32()) // origin
-			meta.m.origin = (uint32_t) args[3]->Int32Value();
+		if(info.Length() > 3 && info[3]->IsInt32()) // origin
+			meta.m.origin = (uint32_t) info[3]->Int32Value();
 		else
 			meta.m.origin = 0;
 
-		if(args.Length() > 4 && args[4]->IsObject()) {
-			Local<Object> jsObj = args[4]->ToObject();
-			Local<Value> val = jsObj->Get(String::New("ignores"));
-			if(val->IsArray()) {
-				Local<Array> array = v8::Local<v8::Array>::Cast(val);
-				uint32_t i = 0;
-				for (i=0 ; i < array->Length() ; ++i) {
-				  const Local<Value> value = array->Get(i);
-				  if(i >= MAX_IGNORE_LIST) {
-					  break;
-				  } else {
-					  meta.ignore_list[i] = value->Uint32Value();
-				  }
+		if(info.Length() > 4 && info[4]->IsObject()) {
+			Local<Object> jsObj = info[4]->ToObject();
+			Local<Value> val; Nan::MaybeLocal<Value> Mval = Nan::Get(jsObj,Nan::New("ignores").ToLocalChecked());
+			if(Mval.ToLocal<Value>(&val)) {
+				if(val->IsArray()) {
+					Local<Array> array = v8::Local<v8::Array>::Cast(val);
+					uint32_t i = 0;
+					for (i=0 ; i < array->Length() ; ++i) {
+					  const Local<Value> value = array->Get(i);
+					  if(i >= MAX_IGNORE_LIST) {
+						  break;
+					  } else {
+						  meta.ignore_list[i] = value->Uint32Value();
+					  }
+					}
+					meta.ignore_list[i] = 0;
+				} else if(val->IsUint32()) {
+					meta.ignore_list[0] = val->Uint32Value();
+					meta.ignore_list[1] = 0;
 				}
-				meta.ignore_list[i] = 0;
-			} else if(val->IsUint32()) {
-				meta.ignore_list[0] = val->Uint32Value();
-				meta.ignore_list[1] = 0;
 			}
+
 			meta.m.extras = 1;
 		}
 
 		if(GreaseLoggerClient::_log(&meta.m,v8str.operator *(),v8str.length()) != GREASE_OK) {
 			if(l->sinkFailureNeedsCall) {
-				if(!l->Opts.onSinkFailureCB.IsEmpty()) {
-					l->Opts.onSinkFailureCB->Call(Context::GetCurrent()->Global(),0,NULL);
+				if(l->Opts.onSinkFailureCB) {
+					l->Opts.onSinkFailureCB->Call(Nan::GetCurrentContext()->Global(),0,NULL);
 					l->sinkFailureNeedsCall = false;
 				}
 			}
@@ -158,8 +170,8 @@ Handle<Value> GreaseLoggerClient::Log(const Arguments& args) {
 				l->sinkErrorCount++;
 				if(l->sinkErrorCount > l->Opts.maxSinkErrors) {
 					// make callback
-					if(!l->Opts.onSinkFailureCB.IsEmpty()) {
-						l->Opts.onSinkFailureCB->Call(Context::GetCurrent()->Global(),0,NULL);
+					if(l->Opts.onSinkFailureCB) {
+						l->Opts.onSinkFailureCB->Call(Nan::GetCurrentContext()->Global(),0,NULL);
 					} else {
 						l->sinkFailureNeedsCall = true;
 					}
@@ -168,7 +180,6 @@ Handle<Value> GreaseLoggerClient::Log(const Arguments& args) {
 			}
 		}
 	}
-	return scope.Close(Undefined());
 }
 
 
@@ -185,20 +196,25 @@ int GreaseLoggerClient::_log( const logMeta *meta, const char *s, int len) { // 
 
 
 
-void GreaseLoggerClient::Init() {
-	Local<FunctionTemplate> tpl = FunctionTemplate::New(New);
-	tpl->SetClassName(String::NewSymbol("GreaseLoggerClient"));
+void GreaseLoggerClient::Init(v8::Local<v8::Object> exports) {
+	Nan::HandleScope scope;
+
+	Local<FunctionTemplate> tpl = Nan::New<v8::FunctionTemplate>(New);
+	tpl->SetClassName(Nan::New("GreaseLoggerClient").ToLocalChecked());
 	tpl->InstanceTemplate()->SetInternalFieldCount(1);
 
 	tpl->PrototypeTemplate()->SetInternalFieldCount(2);
 
-	tpl->InstanceTemplate()->Set(String::NewSymbol("start"), FunctionTemplate::New(Start)->GetFunction());
-	tpl->InstanceTemplate()->Set(String::NewSymbol("log"), FunctionTemplate::New(Log)->GetFunction());
-	tpl->InstanceTemplate()->Set(String::NewSymbol("setGlobalOpts"), FunctionTemplate::New(SetGlobalOpts)->GetFunction());
+	Nan::SetPrototypeMethod(tpl,"start",Start);
+	Nan::SetPrototypeMethod(tpl,"log",Log);
+	Nan::SetPrototypeMethod(tpl,"setGlobalOpts",SetGlobalOpts);
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("start"), FunctionTemplate::New(Start)->GetFunction());
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("log"), FunctionTemplate::New(Log)->GetFunction());
+//	tpl->InstanceTemplate()->Set(String::NewSymbol("setGlobalOpts"), FunctionTemplate::New(SetGlobalOpts)->GetFunction());
 
 
-	GreaseLoggerClient::constructor = Persistent<Function>::New(tpl->GetFunction());
-
+	GreaseLoggerClient::constructor.Reset(tpl->GetFunction());
+	exports->Set(Nan::New<String>("Client").ToLocalChecked(), tpl->GetFunction());
 }
 
 
@@ -209,16 +225,15 @@ void GreaseLoggerClient::Init() {
  * @param args
  * @return
  **/
-Handle<Value> GreaseLoggerClient::New(const Arguments& args) {
-	HandleScope scope;
-
+NAN_METHOD(GreaseLoggerClient::New) {
 	GreaseLoggerClient* obj = NULL;
 
-	if (args.IsConstructCall()) {
+	if (info.IsConstructCall()) {
 	    // Invoked as constructor: `new MyObject(...)`
-		if(args.Length() > 0) {
-			if(!args[0]->IsObject()) {
-				return ThrowException(Exception::TypeError(String::New("Improper first arg to TunInterface cstor. Must be an object.")));
+		if(info.Length() > 0) {
+			if(!info[0]->IsObject()) {
+				Nan::ThrowTypeError("Improper first arg to TunInterface cstor. Must be an object.");
+				return;
 			}
 
 			obj = GreaseLoggerClient::setupClass();
@@ -226,32 +241,33 @@ Handle<Value> GreaseLoggerClient::New(const Arguments& args) {
 			obj = GreaseLoggerClient::setupClass();
 		}
 
-		obj->Wrap(args.This());
-	    return args.This();
+		obj->Wrap(info.This());
+	    info.GetReturnValue().Set(info.This());
 	} else {
 	    // Invoked as plain function `MyObject(...)`, turn into construct call.
 	    const int argc = 1;
-	    Local<Value> argv[argc] = { args[0] };
-	    return scope.Close(constructor->NewInstance(argc, argv));
+	    Local<Value> argv[argc] = { info[0] };
+	    v8::Local<v8::Function> cons = Nan::New<v8::Function>(constructor);
+	    info.GetReturnValue().Set(cons->NewInstance(argc, argv));
 	  }
 
 }
 
-Handle<Value> GreaseLoggerClient::NewInstance(const Arguments& args) {
-	HandleScope scope;
-	int n = args.Length();
-	Local<Object> instance;
-
-	if(args.Length() > 0) {
-		Handle<Value> argv[n];
-		for(int x=0;x<n;x++)
-			argv[x] = args[x];
-		instance = GreaseLoggerClient::constructor->NewInstance(n, argv);
-	} else {
-		instance = GreaseLoggerClient::constructor->NewInstance();
-	}
-
-	return scope.Close(instance);
-}
+//Handle<Value> GreaseLoggerClient::NewInstance(const Arguments& args) {
+//	HandleScope scope;
+//	int n = args.Length();
+//	Local<Object> instance;
+//
+//	if(args.Length() > 0) {
+//		Handle<Value> argv[n];
+//		for(int x=0;x<n;x++)
+//			argv[x] = args[x];
+//		instance = GreaseLoggerClient::constructor->NewInstance(n, argv);
+//	} else {
+//		instance = GreaseLoggerClient::constructor->NewInstance();
+//	}
+//
+//	return scope.Close(instance);
+//}
 
 

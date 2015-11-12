@@ -1,7 +1,6 @@
-// DeviceJS
+// grease-log
 // (c) WigWag Inc 2014
 //
-// tuntap native interface
 
 
 //var build_opts = require('build_opts.js');
@@ -9,8 +8,7 @@ var util = require('util');
 var build_opts = { 
 	debug: 1 
 };
-var colors = require('./colors.js');
-//var _console_log = console.log;
+
 var _console_log = function() {}
 
 var nativelib = null;
@@ -18,10 +16,21 @@ var nativelib = null;
 
 var _logger = {};
 
+var MAX_TAG_ORIGIN_VALUE = 0xFF00; // 'special' value above this
 
 var instance = null;
 var setup = function(options) {
 //	console.log("SETUP!!!!!!!!!!");
+
+	this.makeOriginIdFromPid = function(pid) {
+		return ((pid & 0xFFFFFFFF) | 0x15000000); // add value to avoid stepping on origin IDs which might be statically setup
+	}
+
+	var process_name = 'process';
+	var PID = this.makeOriginIdFromPid(process.pid); // to avoid calling an Accessor constantly, if that's what this does. 
+//	console.log("my pid = " + PID);										      
+
+	var client_only = false;
 
 	var TAGS = {};
 	var tagId = 1;
@@ -29,31 +38,49 @@ var setup = function(options) {
 	var ORIGINS = {};
 	var originId = 1;
 
-	var getTagId = function(o) {
+	var getTagId = function(o,val) {
 		var ret = TAGS[o];
 		if(ret)
 			return ret;
 		else {
-			ret = tagId++;
-			TAGS[o] = ret;
-			instance.addTagLabel(ret,o);
-			return ret;
+			if(val != undefined) {
+				TAGS[o] = val;
+				if(!client_only)
+					instance.addTagLabel(val,o);				
+				return val;
+			} else {
+				if(tagId >= MAX_TAG_ORIGIN_VALUE) 
+					tagId = 1;
+				ret = tagId++;
+				TAGS[o] = ret;
+				if(!client_only)
+					instance.addTagLabel(ret,o);
+				return ret;
+			}
 		}
 	}
 
-	var getOriginId = function(o) {
+	var getOriginId = function(o,val) {
 		var ret = ORIGINS[o];
 		if(ret)
 			return ret;
 		else {
-			ret = originId++;
-			ORIGINS[o] = ret;
-			instance.addOriginLabel(ret,o);	
-			return ret;
+			if(val != undefined) {
+				ORIGINS[o] = val;
+				if(!client_only)
+					instance.addOriginLabel(val,o);				
+				return val;
+			} else {
+				if(originId >= MAX_TAG_ORIGIN_VALUE) 
+					originId = 1;
+				ret = originId++;
+				ORIGINS[o] = ret;
+				if(!client_only)
+					instance.addOriginLabel(ret,o);	
+				return ret;
+			}
 		}
 	}
-
-
 
 	var LEVELS_default = {
 		'log'      : 0x01,
@@ -71,15 +98,20 @@ var setup = function(options) {
 	var do_trace = true;
 	var levels = LEVELS_default;
 	var default_sink = {unixDgram:"/tmp/grease.socket"};
-	var client_only = false;
+	var client_no_origin_as_pid = false;
+	var default_originN = undefined;
+	var old_style_API = false; // this is the API where: grease.warn(TAG,ORIGIN,MESSAGE)
+	var always_use_origin = false;
+
 	if(options) {
 //		console.dir(options);
 		if(options.levels) levels = options.levels;
 		if(options.do_trace !== undefined) do_trace = options.do_trace;
-		if(options.default_sink !== undefined) {
-			default_sink = options.default_sink;
-		}
+		if(options.default_sink !== undefined) { default_sink = options.default_sink; }
 		if(options.client_only) { client_only = true; }
+		if(options.default_origin !== undefined) default_originN = options.default_origin;
+		if(options.always_use_origin) always_use_origin = true;
+		old_style_API = options.old_style_API;
 	}
 
 	if(!client_only) {
@@ -99,7 +131,9 @@ var setup = function(options) {
 				nativelib = require('./build/Debug/greaseLogClient.node');
 			else
 				console.error("Error in nativelib (client) [debug]: " + e + " --> " + e.stack);
-		}			
+		}	
+		if(default_originN === undefined)
+			default_originN = PID;
 	}
 
 	var natives = Object.keys(nativelib);
@@ -207,78 +241,135 @@ var setup = function(options) {
 				// 	self._log(_n,arguments[0]);
 			}
 		} else {
-			self[_name] = function(){
-				if(self.MASK_OUT & _n) {
-					return; // fast track out - if this log function is turned off
-				}
-				// a caller used the log.X function with util.format style parameters						
-				if((typeof arguments[0] !== 'string' || arguments.length > 4) && (!(typeof arguments[0] == 'object' && arguments.length == 4))) {
-					var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
-					for(var n=0;n<arguments.length;n++) {
-						if(typeof arguments[n] !== 'string')
-							s += " " + util.inspect(arguments[n]);							
-						else
-							s += " " + arguments[n];
+			if(old_style_API) {
+				self[_name] = function(){
+					if(self.MASK_OUT & _n) {
+						return; // fast track out - if this log function is turned off
 					}
-					self._log(_n,s);
+					// a caller used the log.X function with util.format style parameters						
+					if((typeof arguments[0] !== 'string' || arguments.length > 4) && (!(typeof arguments[0] == 'object' && arguments.length == 4))) {
+						var s = "**SLOW LOG FIX ME - avoid util.format() style logging**";
+						for(var n=0;n<arguments.length;n++) {
+							if(typeof arguments[n] !== 'string')
+								s += " " + util.inspect(arguments[n]);							
+							else
+								s += " " + arguments[n];
+						}
+						self._log(_n,s);
+					} else {
+						if(arguments.length > 3)
+							self._log(_n,arguments[3],arguments[2],arguments[1],arguments[0]);
+						else if(arguments.length == 3)
+							self._log(_n,arguments[2],arguments[1],arguments[0]);
+						else if(arguments.length == 2)
+							self._log(_n,arguments[1],arguments[0]);
+						else
+							self._log(_n,arguments[0]);
+					}
+				}
+			} else {
+				// NEW STYLE API
+				if(always_use_origin) {
+					self[_name] = function(){
+						if(self.MASK_OUT & _n) {
+							return; // fast track out - if this log function is turned off
+						}
+						var s = util.format.apply(undefined,arguments);
+						self._log(_n,s,undefined,process_name);
+					}			
 				} else {
-					if(arguments.length > 3)
-						self._log(_n,arguments[3],arguments[2],arguments[1],arguments[0]);
-					else if(arguments.length == 3)
-						self._log(_n,arguments[2],arguments[1],arguments[0]);
-					else if(arguments.length == 2)
-						self._log(_n,arguments[1],arguments[0]);
-					else
-						self._log(_n,arguments[0]);
+					self[_name] = function(){
+						if(self.MASK_OUT & _n) {
+							return; // fast track out - if this log function is turned off
+						}
+						var s = util.format.apply(undefined,arguments);
+						self._log(_n,s);
+					}			
+				}
+				// extended API allows you to specify TAG, ORIGIN, etc
+				if(always_use_origin) {
+					self[_name+'_ex'] = function() {
+						if(self.MASK_OUT & _n) {
+							return; // fast track out - if this log function is turned off
+						}
+						if(arguments.length > 1 && typeof arguments[0] === 'object') {                        
+							var argz = Array.prototype.slice.call(arguments);
+							argz.shift();
+							var s = util.format.apply(undefined,argz);
+							//(level,message,tag,origin,extras)
+							if(arguments[0].origin === undefined)
+								self._log(_n,s,arguments[0].tag,process_name,arguments[0]);
+							else
+								self._log(_n,s,arguments[0].tag,arguments[0].origin,arguments[0]);
+						} else {
+							var s = util.format.apply(undefined,arguments);
+							self._log(_n,s,undefined,process_name);
+						}
+					}
+				} else {
+					self[_name+'_ex'] = function() {
+						if(self.MASK_OUT & _n) {
+							return; // fast track out - if this log function is turned off
+						}
+						if(arguments.length > 1 && typeof arguments[0] === 'object') {                        
+							var argz = Array.prototype.slice.call(arguments);
+							argz.shift();
+							var s = util.format.apply(undefined,argz);
+							//(level,message,tag,origin,extras)
+							self._log(_n,s,arguments[0].tag,arguments[0].origin,arguments[0]);
+						} else {
+							var s = util.format.apply(undefined,arguments);
+							self._log(_n,s);
+						}
+					}										
 				}
 			}
 		}
-		// make a LEVEL_fmt version of the log level command - this won't accept TAG or ORIGIN, but
-		// will let the user use multiple parameters, ala node.js - using util.format()
-		// example: log.debug_fmt("%d", 4)
-		self[_name+'_fmt'] = function() {
-			var s = util.format.apply(undefined,arguments);
-			self._log(_n,s);
-		}
-		// a LEVEL_tag_fmt variation.
-		// a variation allowing a tag and fancy formating.
-		// this is more expensive.
-		self[_name+'_tag_fmt'] = function() {
-			var args = [];
-			for(var n=1;n<arguments.length;n++)
-				args[n-1] = arguments[n];
-			var s = util.format.apply(undefined,args);
-			self._log(_n,s,arguments[0]);
-		}
-
-		// this is a LEVEL_trace version of the function.
-		// it provdes a location where the log was made. this is *very* expensive.
-		self[_name+'_trace'] = function() {
-			if(do_trace) {
+		if(old_style_API) {
+			// make a LEVEL_fmt version of the log level command - this won't accept TAG or ORIGIN, but
+			// will let the user use multiple parameters, ala node.js - using util.format()
+			// example: log.debug_fmt("%d", 4)
+			self[_name+'_fmt'] = function() {
+				var s = util.format.apply(undefined,arguments);
+				self._log(_n,s);
+			}
+			// a LEVEL_tag_fmt variation.
+			// a variation allowing a tag and fancy formating.
+			// this is more expensive.
+			self[_name+'_tag_fmt'] = function() {
 				var args = [];
-				for(var n=0;n<arguments.length;n++)
-					args[n] = arguments[n];
-				var d = getStack();
+				for(var n=1;n<arguments.length;n++)
+					args[n-1] = arguments[n];
 				var s = util.format.apply(undefined,args);
-				self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+s,arguments[0],d.subdir+d.file);						
-			} else
-				self[_name+'_tag_fmt'].apply(self,arguments);
-		}
+				self._log(_n,s,arguments[0]);
+			}
 
+			// this is a LEVEL_trace version of the function.
+			// it provdes a location where the log was made. this is *very* expensive.
+			self[_name+'_trace'] = function() {
+				if(do_trace) {
+					var args = [];
+					for(var n=0;n<arguments.length;n++)
+						args[n] = arguments[n];
+					var d = getStack();
+					var s = util.format.apply(undefined,args);
+					self._log(_n,"["+d.subdir+d.file+":"+d.line+" in "+d.method+"()] "+s,arguments[0],d.subdir+d.file);						
+				} else
+					self[_name+'_tag_fmt'].apply(self,arguments);
+			}
+		}
 	}
 
 
 
 	if(!instance && !client_only) {
-		instance = nativelib.newLogger();
+		instance = new nativelib.Logger();
 		instance.start(function(){              // replace dummy logger function with real functions... as soon as can.
 			_console_log("START!!!!!!!!!!!");
 			var levelsK = Object.keys(levels);
 			
 			if(default_sink)
 				instance.addSink(default_sink);
-
-			
 
 			for(var n=0;n<levelsK.length;n++) {
 				var N = levels[levelsK[n]];
@@ -289,7 +380,8 @@ var setup = function(options) {
 			}
 		});
 	} else if(!instance && client_only) {
-		instance = nativelib.newClient();
+//		console.dir(nativelib);
+		instance = new nativelib.Client();
 		_console_log("START!!!!!!!!!!! CLIENT");
 		instance.start();
 
@@ -310,15 +402,30 @@ var setup = function(options) {
 	 * @param {string*} origin 
 	 * @return {[type]} [description]
 	 */
-	this._log = function(level,message,tag,origin,extras) {
-		var	originN = undefined;
-		if(origin)
-			originN = getOriginId(origin);
-		var tagN = undefined;
-		if(tag)
-			tagN = getTagId(tag);
-//		console.log(""+message+","+level + ","+tagN+","+originN);
-		instance.log(message,level,tagN,originN,extras);
+	if(client_only && !client_no_origin_as_pid) {
+		this._log = function(level,message,tag,origin,extras) {
+			var	originN = default_originN;
+			if(origin)
+				originN = getOriginId(origin);
+			var tagN = undefined;
+			if(tag)
+				tagN = getTagId(tag);
+	//		console.log(""+message+","+level + ","+tagN+","+originN);
+			instance.log(message,level,tagN,originN,extras);
+
+		}		
+	} else {
+		this._log = function(level,message,tag,origin,extras) {
+			var	originN = undefined;
+			if(origin)
+				originN = getOriginId(origin);
+			var tagN = undefined;
+			if(tag)
+				tagN = getTagId(tag);
+	//		console.log(""+message+","+level + ","+tagN+","+originN);
+			instance.log(message,level,tagN,originN,extras);
+
+		}
 	}
 
 	if(!client_only) {
@@ -346,34 +453,155 @@ var setup = function(options) {
 			return instance.modifyFilter(obj);
 		}
 
-		this.createPTS = instance.createPTS;
-		this.addSink = instance.addSink;
+		this.createPTS = function() {
+			return instance.createPTS.apply(instance,arguments);
+		}
 
-		this.addOriginLabel = instance.addOriginLabel;
+		this.addSink = function() {
+			return instance.addSink.apply(instance,arguments);
+		}
 
-		this.modifyDefaultTarget = instance.modifyDefaultTarget;
-		this.enableTarget = instance.enableTarget;
-		this.disableTarget = instance.disableTarget;
+		this.addOriginLabel = function(){
+			return instance.addOriginLabel.apply(instance,arguments);
+		}
+
+		this.modifyDefaultTarget = function() {
+			return instance.modifyDefaultTarget.apply(instance,arguments);
+		}
+		this.enableTarget = function() {
+			return instance.enableTarget.apply(instance,arguments);
+		}
+		this.disableTarget = function() {
+			return instance.disableTarget.apply(instance,arguments);
+		}
+
+
+		// setup well-known Tag names. 
+		// See: grease_common_tags.h
+		getTagId("echo",0xFFF01);
+		getTagId("console",0xFFF02);
+		getTagId("native",0xFFF03);
+
+		this.setProcessName = function(s) {
+			process_name = s;
+			instance.addOriginLabel(PID,s);	
+		}
+		this.setProcessName(process_name);
+
+
 	}
 
-
-	// this.addTagLabel = function(l){
-	// 	var n =	getTagId(l);
-	// 	instance.addTagLabel(n,l);
-	// }
-
-	// this.addTagLabel = function(l){
-	// 	var n =	getTagId(l);
-	// 	instance.addTagLabel(n,l);
-	// }
-
-
+	this.getDefaultSink = function() {
+		return default_sink;
+	};
 
 	this.setGlobalOpts = function(obj) {
 		if(obj.levelFilterOutMask)
 			self.MASK_OUT = obj.levelFilterOutMask;
 		instance.setGlobalOpts(obj);
 	};
+
+	var stdoutTag = getTagId("stdout");
+	var stderrTag = getTagId("stderr");
+
+	this.stdoutWriteOverride = function(s) {
+		if(s.length > 0) {	
+			instance.log(s.substr(0,s.length-1),levels.log,stdoutTag);			
+		}
+	}
+
+	this.stderrWriteOverride = function(s) {
+		if(s.length > 0) {	
+			instance.log(s.substr(0,s.length-1),levels.error,stderrTag);			
+		}
+	}
+
+	this.stdoutWriteOverridePID = function(s) {
+		if(s.length > 0) {	
+			instance.log(s.substr(0,s.length-1),levels.log,stdoutTag,PID);			
+		}
+	}
+
+	this.stderrWriteOverridePID = function(s) {
+		if(s.length > 0) {	
+			instance.log(s.substr(0,s.length-1),levels.error,stderrTag,PID);			
+		}
+	}
+
+
+
+	var Writable = require('stream').Writable;
+
+	function WritableConsole(opt) {  // TODO add opt for 'origin' and 'tag'
+  		Writable.call(this, opt);
+ 	    this.logger = self;
+ 	    if(opt.level) {
+ 	    	this.level = opt.level;
+ 	    } else {
+ 	    	this.level = levels.log;
+ 	    }
+ 	}
+
+	util.inherits(WritableConsole, Writable);
+
+	WritableConsole.prototype._write = function(chunk, encoding, callback) {
+//		self._log(self.LEVELS.log,util.inspect(arguments));
+		if(util.isBuffer(chunk)) {			
+			this.logger._log(this.level,chunk.toString('utf8'));				
+		} else {
+			this.logger._log(this.level,chunk);				
+		}
+		callback();
+	}
+
+	this.getNewWritableConsole = function(levl) {
+//		return new WritableConsole({level:levl});
+//		
+		var s = new Writable({highWaterMark:0});
+		var _level = levl;
+		var cb;
+		var data;
+		var tries = 0;
+		var offset = 0;
+
+		s.write = function() {
+//			fs.write(1, data, offset, data.length - offset, null, onwrite);		
+			self._log(_level,data);
+			// return cb();			
+		};
+
+		// var onwrite = function(err, written) {
+		// 	if (err && err.code === 'EPIPE') return cb()
+		// 	if (err && err.code === 'EAGAIN' && tries++ < 30) return setTimeout(write, 10);
+		// 	if (err) return cb(err);
+
+		// 	tries = 0;
+		// 	if (offset + written >= data.length) return cb();
+
+		// 	offset += written;
+		// 	write();
+		// };
+
+		s._write = function(_data, enc, _cb) {
+			offset = 0;
+			cb = _cb;
+			data = _data;
+			write();
+		};
+
+		s._writev = null;
+
+		s._isStdio = true;
+		// s.isTTY = process.stdout.isTTY;
+		s.isTTY = false;
+		s.on('finish', function() {
+			// fs.close(1, function(err) {
+			// 	if (err) s.emit('error', err);
+			// });
+		});
+
+		return s;
+	}	
 
 }
 

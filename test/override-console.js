@@ -1,151 +1,166 @@
 // basic test of logging.
-
-var logger = require('../index.js')();
 var util = require('util');
+var logger = require('../index.js')({
+	always_use_origin: true   // this will always make the 'origin' value the process name, 
+	                          // if not explicitly provided
+});
+var cp = require('child_process');
 
-
-console.dir(logger);
+//console.dir(logger);
 
 var N = 0;
 
+var Console = require('console').Console;
 
-// logger.addTarget({
-// 	    file: "testlog.log"
-// 	},function(targetid,err){
-// 		if(err) {
-// 			console.log("error: "+ util.inspect(err));
-// 		} else {
-// 			console.log("added target: " + targetid);
-// 			var ret = logger.addFilter({ 
-// 				target: targetid,
-// 				mask: logger.LEVELS.error
-// 			});
-// 			console.log("added filter: " + ret);
-// 			var ret = logger.addFilter({ 
-// 				target: targetid,
-// 				mask: logger.LEVELS.debug,
-// 				tag: 'Eds'
-// 			});
-// 			console.log("added filter: " + ret);
-// 			var ret = logger.addFilter({ 
-// 				target: targetid,
-// 				mask: logger.LEVELS.debug,
-// 				tag: 'Eds',
-// 				origin: 'special.js'
-// 			});
-// 			console.log("added filter: " + ret);
-// 		}
+// var newstdout = logger.getNewWritableConsole(logger.LEVELS.log);
+// var newstderr = logger.getNewWritableConsole(logger.LEVELS.error);
 
-// 		logger.error("************ FIRST **********");
-// 		for(var n=0;n<1000;n++) {
-// 			logger.debug("....DEBUG....");
-// 			logger.debug('Eds', "....DEBUG....");			
-// 			logger.error("....ERROR....");
-// 			logger.log(" log log log");
-// 		}
-// 		logger.error("************ LAST **********");
-// 	});
+// var console = new Console(newstdout,newstderr);
+	
+// process.stdout = newstdout;
+// process.stderr = newstderr;
 
-var testCallback = function(str,id) {
-	console.log("CB (" + id + ")>" + str + "<");
-}
+// console.log("newstdout.__proto__ ----->");
+// console.dir(newstdout.__proto__);
+// console.log("process.stdout.__proto__ ------------>"); 
+// console.dir(process.stdout.__proto__);
+// console.log("process.stdout.__proto__.__proto__ ------------>"); 
+// console.dir(process.stdout.__proto__.__proto__);
+// console.log("------------"); 
+// console.dir(newstdout);
+// console.log("------------"); 
+// console.dir(process.stdout);
 
-var fd = null;
 
-logger.setGlobalOpts({
-//	levelFilterOutMask: logger.LEVELS.debug, // will block all debug messages, regardless of filters / targets /etc
-//	defaultFilterOut: true
-	show_errors: true
-});
+// process.stdout = newstdout;
+// process.stderr = newstderr;
 
-logger.createPTS(function(err,pty){
-	if(err) {
-		console.error("Error creating PTS: " + util.inspect(err));
-	} else {
 
-		fd = pty.fd;
-		console.log("PTY: " + pty.path);
+process.stdout.write = logger.stdoutWriteOverridePID;
+process.stderr.write = logger.stderrWriteOverridePID;
 
+logger.setProcessName('testprog');
+
+logger.modifyDefaultTarget({
+	format: {
+    	time: "[%ld:%03d] ",
+    	level: "%-10s ", // left align
+    	tag: "\x1B[33m%-10s\x1B[39m ",
+    	origin: "\x1B[37m\x1B[100m%-10s\x1B[39m\x1B[49m "
 	}
-});
+});	
+// process.stderr.write = function(string,encoding,fd) {
+// 	logger.error("STDERR: " + string);
+// };
 
-// logger.addTagLabel('example_tag');
-// logger.addOriginLabel('example_origin');
-
-logger.addTarget({
-	    tty: fd,
-//	    callback: testCallback,
-	    delim: '\n' // separate each entry with a hard return
-	    ,format: {
-//	    	pre: 'targ-pre>', // pre: "pre>"   // 'bold' escape sequence
-	    	time: "[%ld:%d] ",
-	    	level: "<%s> ",
-	    	tag: "{%s} ",
-	    	origin: "(%s) ",
-	    	pre_msg: " >>> ",
-//	    	post: "<targ-post" // post: "<post"
-	    },
-	},function(targetid,err){
-		if(err) {
-			console.log("error: "+ util.inspect(err));
-		} else {
-			console.log("added rotate target: " + targetid);
 			var ret = logger.addFilter({ 
-				target: targetid,
+				// target: targetid,   // same as saying target: 0 (aka default target)
 				mask: logger.LEVELS.debug,
 				pre: "\x1B[90m",  // grey
 				post: "\x1B[39m"
 			}); 
 			var ret = logger.addFilter({ 
-				target: targetid,
+				// target: targetid,
 				mask: logger.LEVELS.warn,
 				pre: '\x1B[33m',  // yellow
 				post: '\x1B[39m'
 			});
 			var ret = logger.addFilter({ 
-				target: targetid,
+				// target: targetid,
 				mask: logger.LEVELS.error,
 				pre: '\x1B[31m',  // red
 				post: '\x1B[39m'
 			});
 			var ret = logger.addFilter({ 
-				target: targetid,
+				// target: targetid,
+				tag: "stderr",
+				mask: logger.LEVELS.error,
+				post_fmt_pre_msg: '\x1B[90m[console] \x1B[31m',  // red
+				post: '\x1B[39m'
+			});
+			var ret = logger.addFilter({ 
+				// target: targetid,
 				mask: logger.LEVELS.success,
 				pre: '\x1B[32m',  // green
 				post: '\x1B[39m'
 			});
 			var ret = logger.addFilter({ 
-				target: targetid,
+				// target: targetid,
 				mask: logger.LEVELS.log,
 				pre: '\x1B[39m'  // default
 //				post: '\x1B[39m'
 			});
-		}		
-		var N = 1000;
-		logger.debug("************ FIRST **********");
-		var I = setInterval(function(){
-			for(var n=0;n<10;n++) {
-				logger.debug_ex({tag:'example_tag',origin:'example_origin'},"....debug me ["+N+"]....");
-				logger.warn("....warn me ["+N+"]....");	
-				logger.log("....log me ["+N+"]....");					
-				logger.error("....error me ["+N+"]....");	
-				logger.success("....info me ["+N+"]....");					
-				N--;
-			}
-			if(N == 0) {
-				clearInterval(I);
-				logger.debug("************ LAST **********");	
-//				setTimeout(function(){},2000);
-			}
-		},100);
+			var ret = logger.addFilter({ 
+				// target: targetid,
+				mask: logger.LEVELS.log,
+				tag: "stdout",
+				post_fmt_pre_msg: '\x1B[90m[console] \x1B[39m'  // default
+//				post: '\x1B[39m'
+			});
 
 
-	});
+console.log("Hello. Log.");
 
 
+var testCallback = function(str,id) {
+	var entries = str.split("ϐ");      // use special char to separate entries...
+	for(var n=0;n<entries.length;n++)
+		util.log("CB (" + id + ")>" + entries[n] + "<"); // DO NOTE: you need to use util.log here, otherwise it will be recursive test ;)
+}
+
+setTimeout(function(){
+	// given enough time for Sink to setup...
+	var child = cp.fork(__dirname + "/native-tests/test-module-as-sink-client.js");
+	var child_pid = logger.makeOriginIdFromPid(child.pid);
+	console.log("child_pid = " + child_pid);
+	logger.addOriginLabel(child_pid,"childtest");
+
+},1000);
+
+
+
+// logger.addTarget({
+// 		tty
+// 	    callback: testCallback,
+
+// 	    delim: 'ϐ' // separate each entry with a special char
+// 	},function(targetid,err){
+// 		if(err) {
+// 			console.log("error: "+ util.inspect(err));
+// 		} else {
+
+// 			var ret = logger.addFilter({ 
+// 				target: targetid,
+// 				mask: logger.LEVELS.log,
+// 				pre: "LOG>   "
+// 			});
+// 			var ret = logger.addFilter({ 
+// 				target: targetid,
+// 				mask: logger.LEVELS.error,
+// 				pre: "ERROR> "
+// 			});
+// 			var ret = logger.addFilter({ 
+// 				target: targetid,
+// 				mask: logger.LEVELS.warn,
+// 				pre: "WARN>  "            // unfortunately, Console does not differentiate these.
+// 			});
+
+			setTimeout(function(){
+				for(var n=0;n<100;n++) {
+					console.log("Hello. Log. " + n);				
+					console.error("Hello. Error. " + n);				
+					console.warn("Hello. Warn." + n);				
+					console.dir({hello:"there", n: n});
+					logger.info("Hello log.");
+					logger.info_ex({tag:'special'},"Hello log tag.");
+				}
+			},1000);
+// 		}
+// 	}
+// );
 
 // var big = "123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890";
-// for(var n=0;n<10000;n++) {
+// for(var n=0;n<10000;n++) {`
 // 	logger.log("test log " + n);
 // 	setTimeout(function(q){
 // 		logger.error("AAAAAAAAAAAAAAAAAAAAAAAAAAAAA--"+q+"--");
@@ -165,7 +180,9 @@ logger.addTarget({
 
 // }
 
-
+setTimeout(function(){
+	console.log("DONE.");
+},30000);
 
 
 

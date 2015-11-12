@@ -29,25 +29,30 @@ extern "C" {
 #define __DEFAULT_LOG_META_PRIVATE ._cached_hash = { UINT64_C(0xFFFFFFFFFFFFFFFF), 0, 0 }, \
 		._cached_lists = { NULL, NULL, NULL, NULL }
 
+uint32_t __grease_default_tag = GLOG_DEFAULT_TAG;
+
+static OriginId __grease_default_origin = 0;
+
+
 //static uint32_t grease_PREAMBLE = SINK_LOG_PREAMBLE;
-const logMeta __noMetaData = {
-		.tag = 0,
+GREASE_META_ISCONST logMeta __noMetaData = {
+		.tag = GLOG_DEFAULT_TAG,
 		.level = 0,
 		.origin = 0,
 		.target = 0,
 		.extras = 0,
 		__DEFAULT_LOG_META_PRIVATE };
 
-const logMeta __meta_logdefault = {
-		.tag = 0,
+GREASE_META_ISCONST logMeta __meta_logdefault = {
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_LOG,
 		.origin = 0,
 		.target = 0,
 		.extras = 0,
 		__DEFAULT_LOG_META_PRIVATE };
 
-const logMeta __meta_info = {
-		.tag = 0,
+GREASE_META_ISCONST logMeta __meta_info = {
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_INFO,
 		.origin = 0,
 		.target = 0,
@@ -55,8 +60,8 @@ const logMeta __meta_info = {
 		__DEFAULT_LOG_META_PRIVATE };
 
 
-const logMeta __meta_error = {
-		.tag = 0,
+GREASE_META_ISCONST logMeta __meta_error = {
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_ERROR,
 		.origin = 0,
 		.target = 0,
@@ -64,8 +69,8 @@ const logMeta __meta_error = {
 		__DEFAULT_LOG_META_PRIVATE };
 
 
-const logMeta __meta_warn = {
-		.tag = 0,
+GREASE_META_ISCONST logMeta __meta_warn = {
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_WARN,
 		.origin = 0,
 		.target = 0,
@@ -73,8 +78,8 @@ const logMeta __meta_warn = {
 		__DEFAULT_LOG_META_PRIVATE };
 
 
-const logMeta __meta_debug = {
-		.tag = 0,
+GREASE_META_ISCONST logMeta __meta_debug = {
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_DEBUG,
 		.origin = 0,
 		.target = 0,
@@ -82,8 +87,8 @@ const logMeta __meta_debug = {
 		__DEFAULT_LOG_META_PRIVATE };
 
 
-const logMeta __meta_debug2 = {
-		.tag = 0,
+GREASE_META_ISCONST logMeta __meta_debug2 = {
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_DEBUG2,
 		.origin = 0,
 		.target = 0,
@@ -91,8 +96,8 @@ const logMeta __meta_debug2 = {
 		__DEFAULT_LOG_META_PRIVATE };
 
 
-const logMeta __meta_debug3 = {
-		.tag = 0,
+GREASE_META_ISCONST logMeta __meta_debug3 = {
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_DEBUG3,
 		.origin = 0,
 		.target = 0,
@@ -100,8 +105,8 @@ const logMeta __meta_debug3 = {
 		__DEFAULT_LOG_META_PRIVATE };
 
 
-const logMeta __meta_user1 = {
-		.tag = 0,
+GREASE_META_ISCONST logMeta __meta_user1 = {
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_USER1,
 		.origin = 0,
 		.target = 0,
@@ -109,24 +114,24 @@ const logMeta __meta_user1 = {
 		__DEFAULT_LOG_META_PRIVATE };
 
 
-const logMeta __meta_user2 = {
-		.tag = 0,
+GREASE_META_ISCONST logMeta __meta_user2 = {
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_USER2,
 		.origin = 0,
 		.target = 0,
 		.extras = 0,
 		__DEFAULT_LOG_META_PRIVATE };
 
-const logMeta __meta_success = {
-		.tag = 0,
+GREASE_META_ISCONST logMeta __meta_success = {
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_SUCCESS,
 		.origin = 0,
 		.target = 0,
 		.extras = 0,
 		__DEFAULT_LOG_META_PRIVATE };
 
-const logMeta __meta_trace = {
-		.tag = 0,
+GREASE_META_ISCONST logMeta __meta_trace = {
+		.tag = GLOG_DEFAULT_TAG,
 		.level = GREASE_LEVEL_TRACE,
 		.origin = 0,
 		.target = 0,
@@ -153,18 +158,20 @@ static void *local_log;
 __attribute__((visibility ("hidden"))) int (*grease_log)(const logMeta *f, const char *s, RawLogLen len) = NULL;
 
 
-static __thread char _grease_logstr_buffer[GREASE_C_MACRO_MAX_MESSAGE];
+static __thread char _grease_logstr_buffer[GREASE_C_MACRO_MAX_MESSAGE+1];
 
 #ifdef __cplusplus
 }
 #endif
 
-int grease_printf(const logMeta *m, const char *format, ... ) {
+int grease_printf(logMeta *m, const char *format, ... ) {
 	va_list args;
 	va_start (args, format);
 	RawLogLen len = (RawLogLen) vsnprintf (_grease_logstr_buffer,GREASE_C_MACRO_MAX_MESSAGE,format, args);
 	va_end (args);
-#ifndef GREASE_DISABLE
+//	_grease_logstr_buffer[GREASE_C_MACRO_MAX_MESSAGE] = '\0';
+	if(len > GREASE_C_MACRO_MAX_MESSAGE) len = GREASE_C_MACRO_MAX_MESSAGE;
+#ifndef GREASE_DISABLE0
 	if(grease_log != NULL) {
 		if(grease_log(m,_grease_logstr_buffer, len) == GREASE_OK) {
 			return GREASE_OK;
@@ -188,10 +195,11 @@ int grease_printf(const logMeta *m, const char *format, ... ) {
  * @return returns GREASE_OK if successful, or GREASE_NO_BUFFER if the buffer is too small. If parameters are
  * invalid returns GREASE_INVALID_PARAMS
  */
-int _grease_logToRaw(const logMeta *f, const char *s, RawLogLen len, char *tobuf, RawLogLen *buflen) {
+int _grease_logToRaw(logMeta *f, const char *s, RawLogLen len, char *tobuf, RawLogLen *buflen) {
 	if(!tobuf || *buflen < (GREASE_RAWBUF_MIN_SIZE + len))  // sanity check
 		return GREASE_NO_BUFFER;
 	int w = 0;
+
 
 	memcpy(tobuf,&__grease_preamble,SIZEOF_SINK_LOG_PREAMBLE);
 	w += SIZEOF_SINK_LOG_PREAMBLE;
@@ -202,6 +210,11 @@ int _grease_logToRaw(const logMeta *f, const char *s, RawLogLen len, char *tobuf
 		memcpy(tobuf+w,f,sizeof(logMeta));
 	else
 		memcpy(tobuf+w,&__noMetaData,sizeof(logMeta));
+
+#ifndef GREASE_NO_DEFAULT_NATIVE_ORIGIN
+	((logMeta *) tobuf+w)->origin = __grease_default_origin;
+#endif
+
 	w += sizeof(logMeta);
 	if(s && len > 0) {
 		memcpy(tobuf+w,s,len);
@@ -265,7 +278,16 @@ THREAD_LOCAL int err_cnt;
 THREAD_LOCAL char header_buffer[GREASE_CLIENT_HEADER_SIZE];
 THREAD_LOCAL char meta_buffer[sizeof(logMeta)];
 
-int grease_logToSink(const logMeta *f, const char *s, RawLogLen len) {
+
+#ifndef GREASE_DEFAULT_ORIGIN_FUNC
+#define GREASE_DEFAULT_ORIGIN_FUNC
+OriginId __grease_get_default_origin(void) { return (((OriginId) getpid()) | 0x15000000); } // see index.js for other place this is used.
+#else
+GREASE_DEFAULT_ORIGIN_FUNC
+#endif
+
+
+int grease_logToSink(logMeta *f, const char *s, RawLogLen len) {
 	uint32_t _len = len + sizeof(logMeta);
 	SET_SIZE_IN_HEADER(header_buffer,_len);
 //	memcpy(meta_buffer,f,sizeof(logMeta));   // why do we need to do this? just use the pointer...
@@ -274,6 +296,9 @@ int grease_logToSink(const logMeta *f, const char *s, RawLogLen len) {
 	iov[SINK_BUFFER_META].iov_base = const_cast<void *>(f);
 #else
 	iov[SINK_BUFFER_META].iov_base = (void *) (f);
+#endif
+#ifndef GREASE_NO_DEFAULT_NATIVE_ORIGIN
+	((logMeta *) iov[SINK_BUFFER_META].iov_base)->origin = __grease_default_origin;
 #endif
 	iov[SINK_BUFFER_STRING].iov_base = (void *) s;
 	iov[SINK_BUFFER_STRING].iov_len = len;
@@ -513,6 +538,9 @@ int grease_getConnectivityMethod() {
 
 int grease_initLogger() {
 	// NOTE: found_module is not a TLS variable, the rest of these are...
+#ifndef GREASE_NO_DEFAULT_NATIVE_ORIGIN
+	__grease_default_origin = __grease_get_default_origin();
+#endif
 	if(found_module != MODULE_SEARCH_NOT_RAN) {
 		if(found_module) {
 			grease_log = local_log;
