@@ -487,8 +487,13 @@ int GreaseLogger::logFromRaw(char *base, int len) {
 //		if(l > GREASE_MAX_MESSAGE_SIZE)  // don't let crazy memory blocks through.
 //			return GREASE_OVERFLOW;
 //		memcpy(&m,base+GREASE_CLIENT_HEADER_SIZE,sizeof(logMeta));
-		return logP((logMeta *)base,base+sizeof(logMeta),len);
-		return GREASE_OK;
+		int l = len - sizeof(logMeta);
+		if( l > 0) {
+			return logP((logMeta *)base,base+sizeof(logMeta),l);
+		} else {
+			ERROR_OUT("logRaw() malformed data. message too small.\n");
+			return GREASE_OK;
+		}
 	} else
 		return GREASE_NO_BUFFER;
 }

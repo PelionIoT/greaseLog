@@ -1348,6 +1348,7 @@ protected:
 										if(IS_SINK_PREAMBLE(SD_WAL_BUF_P)) {
 											state = IN_LOG;
 											GET_SIZE_FROM_PREAMBLE(SD_WAL_BUF_P,entry_size);
+											DBG_OUT(">>>> dgram sink see %d bytes",entry_size);
 										} else {
 											DBG_OUT("UnixDgram Client: Bad state. resetting. %d\n",sizeof(uint32_t));
 											state = NEED_PREAMBLE;
@@ -1369,6 +1370,7 @@ protected:
 									if(header_temp_walk >= GREASE_CLIENT_HEADER_SIZE) {
 										if(IS_SINK_PREAMBLE(header_temp)) {
 											GET_SIZE_FROM_PREAMBLE(header_temp,entry_size);
+											DBG_OUT(">>>> dgram sink see %d bytes",entry_size);
 											header_temp_walk = 0;
 											state = IN_LOG;
 										} else {
