@@ -226,7 +226,7 @@ public:
 			RawLogLen len = (RawLogLen) vsnprintf (buffer,512,format, args);
 			va_end (args);
 			if(handle.base) LFREE(handle.base);
-			handle.len = len+1;
+			handle.len = len;
 			handle.base = (char *) LMALLOC(handle.len);
 			::memset((void *)handle.base,(int) 0,handle.len);
 			::memcpy(handle.base,buffer,len);
