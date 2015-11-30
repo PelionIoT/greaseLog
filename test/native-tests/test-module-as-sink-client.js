@@ -15,7 +15,7 @@ logger.setGlobalOpts({
 
 
 for(var n=0;n<10;n++)
-	logger.log("I am from node.js"); // most of these will be at the end, that's ok for this test
+	logger.log("I am from node.js (sink test)"); // most of these will be at the end, that's ok for this test
 
 var clearme = setInterval(function(){
 	for(var n=0;n<4;n++) {

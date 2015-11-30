@@ -48,7 +48,7 @@ var N = 0;
 
 logger.addTarget({
 	    file: "rotateThis.log",
-	    delim: "\n",
+	    delim: "END\n",
 	    format: {
 	    	pre: '\x1B[1m', // pre: "pre>"   // 'bold' escape sequence
 	    	time: "[%ld:%d] ",
@@ -80,8 +80,10 @@ logger.addTarget({
 		logger.debug_ex({tag:'rotate'},"************ FIRST **********");
 		var i =	setInterval(function(){
 			N = N - 200;
-			for(var n=0;n<200;n++)
+			for(var n=0;n<200;n++) {
+				logger.debug_ex({tag:'rotate',origin:'myorigin'},"....rotate me ["+(N-n+200)+"]....");
 				logger.debug_ex({tag:'rotate'},"....rotate me ["+(N-n+200)+"]....");
+			}
 			if(N == 0) {
 				logger.debug_ex({tag:'rotate'},"************ LAST **********");
 				clearInterval(i);

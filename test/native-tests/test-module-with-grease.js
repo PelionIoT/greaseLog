@@ -2,8 +2,26 @@
 // the node.js process needs.
 var logger = require('../../index.js')();
 
-// colors, to differentiate levels
-// more here: http://misc.flogisoft.com/bash/tip_colors_and_formatting
+
+logger.addTarget({
+	    file: "rotateThis.log",
+	    delim: "\n",
+	    format: {
+	    	pre: '\x1B[1m', // pre: "pre>"   // 'bold' escape sequence
+	    	time: "[%ld:%d] ",
+	    	level: "<%s> ",
+	    	tag: "{%s} ",
+	    	origin: "(%s) ",
+	    	post: "\x1B[22m" // post: "<post"
+	    },
+	    rotate: {
+	    	max_files: 5,
+	    	max_file_size:  10000,
+	    	max_total_size: 100000
+	    	,rotate_on_start: true
+	    }
+	},function(targetid,err){
+
 var ret = logger.addFilter({ 
 	// target: targetid,   // same as saying target: 0 (aka default target)
 	mask: logger.LEVELS.debug,
@@ -45,6 +63,14 @@ var ret = logger.addFilter({
 	mask: logger.LEVELS.log,
 	pre: '\x1B[39m[LOG]     '  // default
 });
+
+	
+});
+
+// colors, to differentiate levels
+// more here: http://misc.flogisoft.com/bash/tip_colors_and_formatting
+
+
 
 // some logging in another module....
 
