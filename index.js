@@ -147,6 +147,7 @@ var setup = function(options) {
 	//	console.dir(levels);
 	this.LEVELS_names_only = {};  // does not include 'ALL' (or other stuff like this)
 	this.LEVELS = {};
+	this.LEVELS_BY_VALUE = {};
 	this.LEVELS.ALL = 0xFFFFFFFF; // max uint32_t
 	this.MASK_OUT = 0;
 
@@ -155,6 +156,7 @@ var setup = function(options) {
 		if(!this[levelsK[n]]) {
 			var N = levels[levelsK[n]];
 			var name = levelsK[n];
+			this.LEVELS_BY_VALUE[N] = name;
 			this.LEVELS_names_only[name] = N;
 			this.LEVELS[name] = N;  // a copy, used for caller when creating filters
 			this[name] = function(){
@@ -198,8 +200,6 @@ var setup = function(options) {
 	this.onSinkFailed = function(cb) {
 		sinkFailedCBs.push(cb)
 	}
-
-
 
 
 	/**
@@ -466,10 +466,6 @@ var setup = function(options) {
 					}
 				}
 				console.error("greaseLog FAILURE: Switching to console. Sink failed.");
-				// logger = console;
-				// logger.debug = console.log;
-				// logger.error = console.error;
-				// logger.warn = console.error;
 
 				_sink_failed = true;
 			}
@@ -505,13 +501,15 @@ var setup = function(options) {
 				instance.log(message,level,tagN,originN,extras);				
 			} else {
 				var _origin = "";
-				var _tag = "";
-				if(origin) _origin = origin
-				if(tag) _tag = tag
+				var _tag = "--";
+				if(origin) _origin = origin;
+				if(tag) _tag = tag;
+				var _level = self.LEVELS_BY_VALUE[level];
+				if(!_level) _level = level; // just use the number if it's not in the table
 				if(level & (levels.error | levels.warn)) {
-					console.error(""+level+" : " + _tag + " : " + _origin + " : " + message);
+					console.error("["+_level+"] " + _tag + " : " + _origin + " : " + message);
 				} else {
-					console.log(""+level+" : " + _tag + " : " + _origin + " : " + message);
+					console.log("["+_level+"] " + _tag + " : " + _origin + " : " + message);
 				}
 			}
 		}		
