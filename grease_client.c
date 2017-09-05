@@ -287,6 +287,12 @@ GREASE_DEFAULT_ORIGIN_FUNC
 #endif
 
 
+#define GREASE_FALLBACK_OUT(f, s, len) if( f->level & (GREASE_LEVEL_ERROR | GREASE_LEVEL_WARN) ) { \
+   write( STDERR_FILENO, s, len); \
+} else { \
+   write( STDOUT_FILENO, s, len); \
+}
+
 int grease_logToSink(logMeta *f, const char *s, RawLogLen len) {
 	uint32_t _len = len + sizeof(logMeta);
 	SET_SIZE_IN_HEADER(header_buffer,_len);
@@ -310,6 +316,7 @@ int grease_logToSink(logMeta *f, const char *s, RawLogLen len) {
 			grease_log = NULL;
 			_GREASE_ERROR_PRINTF("Grease: disabling sink use. Too many errors.\n");
 		}
+		GREASE_FALLBACK_OUT(f,s,len);
 		return GREASE_SINK_FAILURE;
 	} else {
 		_GREASE_DBG_PRINTF("Sent %d bytes --> Sink\n", sent_cnt);
@@ -580,6 +587,26 @@ int grease_fastInitLogger() {
 	}
 	return GREASE_OK;
 }
+
+int grease_fastInitLogger_extended(const char *path) {
+	if(check_grease_symbols()) {
+		_GREASE_DBG_PRINTF("------- Found symbols.\n");
+		grease_log = local_log;
+		return GREASE_OK;
+	} else {
+		// TODO setup Sink connection
+//		grease_log = grease_logToSink;
+//		grease_log = NULL;
+		if(!setup_sink_dgram_socket(path,SINK_NO_PING)) {
+			grease_log = grease_logToSink;
+		} else {
+			grease_log = NULL;
+			return GREASE_FAILED;
+		}
+	}
+	return GREASE_OK;
+}
+
 
 // not the end of the world if this is not called...
 void grease_shutdown() {

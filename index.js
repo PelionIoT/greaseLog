@@ -18,6 +18,8 @@ var _logger = {};
 
 var MAX_TAG_ORIGIN_VALUE = 0xFF00; // 'special' value above this
 
+var _sink_failed = false;
+
 var instance = null;
 var setup = function(options) {
 //	console.log("SETUP!!!!!!!!!!");
@@ -191,7 +193,11 @@ var setup = function(options) {
 
 	var self = this;
 
+	var sinkFailedCBs = [];
 
+	this.onSinkFailed = function(cb) {
+		sinkFailedCBs.push(cb)
+	}
 
 
 
@@ -449,7 +455,25 @@ var setup = function(options) {
 //		console.dir(nativelib);
 		instance = new nativelib.Client();
 		_console_log("START!!!!!!!!!!! CLIENT");
+
 		instance.start();
+
+		instance.setGlobalOpts({
+			onSinkFailureCB: function() {
+				for(var q=0;q<sinkFailedCBs.length;q++) {
+					if(typeof sinkFailedCBs[q] == 'function') {
+						sinkFailedCBs[q]()
+					}
+				}
+				console.error("greaseLog FAILURE: Switching to console. Sink failed.");
+				// logger = console;
+				// logger.debug = console.log;
+				// logger.error = console.error;
+				// logger.warn = console.error;
+
+				_sink_failed = true;
+			}
+		});
 
 		var levelsK = Object.keys(levels);
 
@@ -470,15 +494,26 @@ var setup = function(options) {
 	 */
 	if(client_only && !client_no_origin_as_pid) {
 		this._log = function(level,message,tag,origin,extras) {
-			var	originN = default_originN;
-			if(origin)
-				originN = getOriginId(origin);
-			var tagN = undefined;
-			if(tag)
-				tagN = getTagId(tag);
-	//		console.log(""+message+","+level + ","+tagN+","+originN);
-			instance.log(message,level,tagN,originN,extras);
-
+			if(!_sink_failed) {
+				var	originN = default_originN;
+				if(origin)
+					originN = getOriginId(origin);
+				var tagN = undefined;
+				if(tag)
+					tagN = getTagId(tag);
+		//		console.log(""+message+","+level + ","+tagN+","+originN);
+				instance.log(message,level,tagN,originN,extras);				
+			} else {
+				var _origin = "";
+				var _tag = "";
+				if(origin) _origin = origin
+				if(tag) _tag = tag
+				if(level & (levels.error | levels.warn)) {
+					console.error(""+level+" : " + _tag + " : " + _origin + " : " + message);
+				} else {
+					console.log(""+level+" : " + _tag + " : " + _origin + " : " + message);
+				}
+			}
 		}		
 	} else {
 		this._log = function(level,message,tag,origin,extras) {

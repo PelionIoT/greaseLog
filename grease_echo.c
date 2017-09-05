@@ -36,11 +36,14 @@ int main(int argc, char *argv[]) {
 	}
 
 	int n = 1;
+	char socket_path = NULL;
 
 	if(argv[n][0] == '-' && argv[n][1] == '-') {
 		if(!strcmp(argv[1]+2,"help")) {
-			printf("Usage: grease_echo [--check] [--[LEVEL]] \"string here\"\n"
-				   "            --check     will check to see if logger is live.\n"
+			printf("Usage: grease_echo [--check] [--socket PATH] [--[LEVEL]] \"string here\"\n"
+				   "            --socket PATH  use a custom path to the grease socket. Must be first argument.\n"
+				   "                           Needs an absolute path.\n"
+				   "            --check        will check to see if logger is live. (Use with no other args)\n"
 				   "LEVELs:     --error\n"
 				   "            --warn\n"
 				   "            --success\n"
@@ -61,57 +64,65 @@ int main(int argc, char *argv[]) {
 				bye(0);
 			}
 		}
+
+		int n = 0;
+
+		if(!strcmp(argv[1]+2,"socket")){
+			socket_path = argv[2];
+			n+= 2;
+		}
+
 		if(grease_fastInitLogger() != GREASE_OK) {
 			fprintf(stderr,"    Error: Grease not running.\n");
 		}
-		if(argc > 2 && argv[2][0] != '\0') {
-			if(!strcmp(argv[1]+2,"info")) {
+		if(argc > n && argv[n+2][0] != '\0') {
+			if(!strcmp(argv[n+1]+2,"info")) {
 				GLOG_INFO(argv[2]);
 				bye(0);
 			} else
-			if(!strcmp(argv[1]+2,"error")) {
-				GLOG_ERROR(argv[2]);
+			if(!strcmp(argv[n+1]+2,"error")) {
+				GLOG_ERROR(argv[n+2]);
 				bye(0);
 			} else
-			if(!strcmp(argv[1]+2,"warn")) {
-				GLOG_WARN(argv[2]);
+			if(!strcmp(argv[n+1]+2,"warn")) {
+				GLOG_WARN(argv[n+2]);
 				bye(0);
 			} else
-			if(!strcmp(argv[1]+2,"success")) {
-				GLOG_SUCCESS(argv[2]);
+			if(!strcmp(argv[n+1]+2,"success")) {
+				GLOG_SUCCESS(argv[n+2]);
 				bye(0);
 			} else
-			if(!strcmp(argv[1]+2,"debug")) {
-				GLOG_DEBUG(argv[2]);
+			if(!strcmp(argv[n+1]+2,"debug")) {
+				GLOG_DEBUG(argv[n+2]);
 				bye(0);
 			} else
-			if(!strcmp(argv[1]+2,"debug2")) {
-				GLOG_DEBUG2(argv[2]);
+			if(!strcmp(argv[n+1]+2,"debug2")) {
+				GLOG_DEBUG2(argv[n+2]);
 				bye(0);
 			} else
-			if(!strcmp(argv[1]+2,"debug3")) {
-				GLOG_DEBUG3(argv[2]);
+			if(!strcmp(argv[n+1]+2,"debug3")) {
+				GLOG_DEBUG3(argv[n+2]);
 				bye(0);
 			} else
-			if(!strcmp(argv[1]+2,"user1")) {
-				GLOG_USER1(argv[2]);
+			if(!strcmp(argv[n+1]+2,"user1")) {
+				GLOG_USER1(argv[n+2]);
 				bye(0);
 			} else
-			if(!strcmp(argv[1]+2,"user2")) {
-				GLOG_USER2(argv[2]);
+			if(!strcmp(argv[n+1]+2,"user2")) {
+				GLOG_USER2(argv[n+2]);
 				bye(0);
 			} else {
 				fprintf(stderr,"grease_echo: Unknown LEVEL.\n");
-				GLOG(argv[2]);
+				GLOG(argv[n+2]);
 				bye(1);
 			}
 		}
 	} else {
-		if(grease_fastInitLogger() != GREASE_OK) {
+		if(grease_fastInitLogger_extended(socket_path) != GREASE_OK) {
 			fprintf(stderr,"    Error: Grease not running.\n");
 		}
-		if(argv[1][0] != '\0') {
-			GLOG(argv[1]);
+		if(argv[n+1][0] != '\0') {
+			GLOG(argv[n+1]);
 		}
 		bye(0);
 	}
