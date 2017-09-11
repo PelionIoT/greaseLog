@@ -31,9 +31,10 @@ public:
 		bool defaultFilterOut;
 		int maxSinkErrors;
 		Nan::Callback *onSinkFailureCB;
+		uint32_t defaultOriginId;  // the origin ID to use if one is not provided.
 
 		Opts_t() : show_errors(false), callback_errors(false), levelFilterOutMask(0), defaultFilterOut(false),
-		 	 maxSinkErrors(SINK_MAX_ERRORS), onSinkFailureCB(NULL)
+		 	 maxSinkErrors(SINK_MAX_ERRORS), onSinkFailureCB(NULL), defaultOriginId(0)
 		{
 			uv_mutex_init(&mutex);
 		}
@@ -105,7 +106,7 @@ public:
 
 
 	static void shutdown() {
-		GreaseLoggerClient *l = setupClass();
+		setupClass();
 		grease_shutdown();
 	}
 };

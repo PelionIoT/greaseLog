@@ -20,9 +20,20 @@ var MAX_TAG_ORIGIN_VALUE = 0xFF00; // 'special' value above this
 
 var _sink_failed = false;
 
+
+var dbg_logger = function() {};
+
 var instance = null;
 var setup = function(options) {
-//	console.log("SETUP!!!!!!!!!!");
+
+	if(options && options.debug) {
+        dbg_logger = function() {
+            if(arguments[0]) arguments[0] = "Grease(JS): " + arguments[0];
+            console.log.apply(undefined,arguments);
+        }
+
+	}
+	dbg_logger("grease-log setup() entry");
 
 	this.makeOriginIdFromPid = function(pid) {
 		return ((pid & 0xFFFFFFFF) | 0x15000000); // add value to avoid stepping on origin IDs which might be statically setup
@@ -100,7 +111,6 @@ var setup = function(options) {
 	var do_trace = true;
 	var levels = LEVELS_default;
 	var default_sink = {unixDgram:"/tmp/grease.socket"};
-	var client_no_origin_as_pid = false;
 	var default_originN = undefined;
 	var old_style_API = false; // this is the API where: grease.warn(TAG,ORIGIN,MESSAGE)
 	var always_use_origin = false;
@@ -117,6 +127,7 @@ var setup = function(options) {
 	}
 
 	if(!client_only) {
+		dbg_logger("using greaseLog.node")		
 		try {
 			nativelib = require('./build/Release/greaseLog.node');
 		} catch(e) {
@@ -126,16 +137,21 @@ var setup = function(options) {
 				console.error("Error in nativelib [debug]: " + e + " --> " + e.stack);
 		}	
 	} else {
+		dbg_logger("using greaseLogClient.node")
 		try {
 			nativelib = require('./build/Release/greaseLogClient.node');
 		} catch(e) {
+			
 			if(e.code == 'MODULE_NOT_FOUND')
 				nativelib = require('./build/Debug/greaseLogClient.node');
 			else
 				console.error("Error in nativelib (client) [debug]: " + e + " --> " + e.stack);
 		}	
-		if(default_originN === undefined)
-			default_originN = PID;
+		if(default_originN === undefined) {
+			default_originN = PID; 
+		} else {
+			PID = default_originN;
+		}
 	}
 
 	var natives = Object.keys(nativelib);
@@ -143,6 +159,8 @@ var setup = function(options) {
 	//	console.log(natives[n] + " typeof " + typeof nativelib[natives[n]]);
 		_logger[natives[n]] = nativelib[natives[n]];
 	}
+
+	dbg_logger("mixed in native calls to this object")
 
 	//	console.dir(levels);
 	this.LEVELS_names_only = {};  // does not include 'ALL' (or other stuff like this)
@@ -167,6 +185,8 @@ var setup = function(options) {
 
 	}
 
+
+	dbg_logger("processed levels")
 
 	var getStack = function() {
 		// EXPENSIVE !!!!!!!!!!!!
@@ -433,11 +453,12 @@ var setup = function(options) {
 	}
 
 
+	dbg_logger("start native...")
 
 	if(!instance && !client_only) {
 		instance = new nativelib.Logger();
 		instance.start(function(){              // replace dummy logger function with real functions... as soon as can.
-			_console_log("START!!!!!!!!!!!");
+			dbg_logger("START!!!!!!!!!!!");
 			var levelsK = Object.keys(levels);
 			
 			if(default_sink)
@@ -454,9 +475,11 @@ var setup = function(options) {
 	} else if(!instance && client_only) {
 //		console.dir(nativelib);
 		instance = new nativelib.Client();
-		_console_log("START!!!!!!!!!!! CLIENT");
+		dbg_logger("START!!!!!!!!!!! CLIENT");
 
 		instance.start();
+
+		dbg_logger("past .start()");
 
 		instance.setGlobalOpts({
 			onSinkFailureCB: function() {
@@ -471,6 +494,8 @@ var setup = function(options) {
 			}
 		});
 
+		dbg_logger("past initial setGlobalOpts()")
+
 		var levelsK = Object.keys(levels);
 
 		for(var n=0;n<levelsK.length;n++) {
@@ -478,6 +503,8 @@ var setup = function(options) {
 			var name = levelsK[n];
 			createfunc(name,N);
 		}
+
+		dbg_logger("Made convenience funcs for levels.")
 	}
 
 
@@ -488,12 +515,16 @@ var setup = function(options) {
 	 * @param {string*} origin 
 	 * @return {[type]} [description]
 	 */
-	if(client_only && !client_no_origin_as_pid) {
+	if(client_only) {
+		dbg_logger("Adding log funcs for client only")
 		this._log = function(level,message,tag,origin,extras) {
 			if(!_sink_failed) {
-				var	originN = default_originN;
-				if(origin)
-					originN = getOriginId(origin);
+				var	originN = undefined;
+				if(always_use_origin) {
+					originN = default_originN;
+					if(origin)
+						originN = getOriginId(origin);
+				}
 				var tagN = undefined;
 				if(tag)
 					tagN = getTagId(tag);
@@ -595,6 +626,7 @@ var setup = function(options) {
 	};
 
 	this.setGlobalOpts = function(obj) {
+		dbg_logger("setGlobalOpts(",obj,")")
 		if(obj.levelFilterOutMask)
 			self.MASK_OUT = obj.levelFilterOutMask;
 		instance.setGlobalOpts(obj);
@@ -703,8 +735,6 @@ var setup = function(options) {
 	}	
 
 }
-
-
 
 
 module.exports = function(options) {

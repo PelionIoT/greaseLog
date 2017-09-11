@@ -61,6 +61,17 @@ NAN_METHOD(GreaseLoggerClient::SetGlobalOpts) {
 	}
 
 
+	jsVal = Nan::Get(jsObj,Nan::New("defaultOriginId").ToLocalChecked());
+	if(jsVal.ToLocal(&jsAVal)) {
+		if(jsAVal->IsUint32()) {
+			uint32_t v = jsAVal->Uint32Value();
+			l->Opts.lock();
+			l->Opts.defaultOriginId = v;
+			l->Opts.unlock();
+			_GREASE_DBG_PRINTF("SET SET SET SET set default origin ID %d\n",l->Opts.defaultOriginId);
+		}
+	}
+
 	//	req->completeCB = Persistent<Function>::New(Local<Function>::Cast(args[0]));
 	jsVal = Nan::Get(jsObj,Nan::New("onSinkFailureCB").ToLocalChecked());
 	if(jsVal.ToLocal(&jsAVal)) {
@@ -124,15 +135,21 @@ NAN_METHOD(GreaseLoggerClient::Log) {
 		Nan::Utf8String v8str(info[0]->ToString());
 		meta.m.level = (uint32_t) info[1]->Int32Value(); // level
 
+		meta.m.origin = l->Opts.defaultOriginId;
+
+		_GREASE_DBG_PRINTF("1 meta.m.origin= %d\n",meta.m.origin);
+
+
 		if(info.Length() > 2 && info[2]->IsInt32()) // tag
 			meta.m.tag = (uint32_t) info[2]->Int32Value();
 		else
 			meta.m.tag = 0;
 
-		if(info.Length() > 3 && info[3]->IsInt32()) // origin
+		if(info.Length() > 3 && info[3]->IsInt32()) { // origin
 			meta.m.origin = (uint32_t) info[3]->Int32Value();
-		else
-			meta.m.origin = 0;
+			if(meta.m.origin == 0)
+				meta.m.origin = l->Opts.defaultOriginId;
+		}
 
 		if(info.Length() > 4 && info[4]->IsObject()) {
 			Local<Object> jsObj = info[4]->ToObject();
@@ -158,6 +175,8 @@ NAN_METHOD(GreaseLoggerClient::Log) {
 
 			meta.m.extras = 1;
 		}
+
+		_GREASE_DBG_PRINTF("2 meta.m.origin= %d\n",meta.m.origin);
 
 		if(GreaseLoggerClient::_log(&meta.m,v8str.operator *(),v8str.length()) != GREASE_OK) {
 			if(l->sinkFailureNeedsCall) {
