@@ -105,6 +105,7 @@ var setup = function(options) {
 		'user1'    : 0x40,
 		'user2'    : 0x80,  // Levels can use the rest of the bits too...
 		'info'     : 0x100,
+		'verbose'  : 0x100, // devicejs-ng likes this
 		'success'  : 0x100,
 		'trace'    : 0x200
 	};
