@@ -27,6 +27,7 @@ using namespace v8;
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <linux/fs.h>
+#include <sys/uio.h>    // Linux writev()
 
 #include <string.h>
 #include <stdlib.h>
@@ -2475,7 +2476,7 @@ protected:
 			submittedWrites++;
 			uv_rwlock_wrunlock(&wrLock);
 
-			int got = writev(fileHandle, iov, b->N);
+			int got = ::writev(fileHandle, iov, b->N);
 
 			if(got < 0) {
 				ERROR_PERROR("file: write_overflow_cb() ", errno);
