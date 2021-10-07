@@ -23,6 +23,10 @@ char *local_strdup_safe(const char *s) {
 			n = MAX_STRDUP;
 		}
 		ret = (char *) malloc(n + 1);
+		if (ret == NULLPTR) {
+			printf("ERROR - Out of memory!");
+			return NULLPTR;
+		}
 		memcpy(ret,s,n);
 		*(ret+n) = '\0';
 	}
